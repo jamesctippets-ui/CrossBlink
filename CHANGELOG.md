@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Added
+
+- Flash the Sticky over USB from a Mac with `scripts/flash-sticky.sh`. It downloads the latest Sticky build from main or a pull request, finds the device, and replaces only the app firmware, so the SD card and settings are kept.
+
 ## [v1.6.1] - 2026-10-03
 
 ### Added

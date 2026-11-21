@@ -51,6 +51,41 @@ If your device has USB data transfer disabled:
 3. Choose the firmware option you want to download.
 4. Click on the "Download update.bin" button and follow the instructions.
 
+## CrossBlink: Sticky USB Flasher for macOS
+
+Flash the Sticky straight from a Mac over USB, without copying files to the SD
+card. Only the app firmware is replaced: the SD card (books, settings, caches)
+and the rest of flash are left alone.
+
+1. Plug the Sticky into the Mac with a USB-C data cable and wake it.
+2. Open Terminal and run:
+
+   ```sh
+   bash <(curl -fsSL https://raw.githubusercontent.com/jamesctippets-ui/crossblink/main/scripts/flash-sticky.sh)
+   ```
+
+3. Answer `Y` when it asks to flash. The Sticky restarts on the new firmware.
+
+By default it flashes the newest Sticky build from `main`. Other choices (add
+them after the command above, or run `scripts/flash-sticky.sh` from a clone):
+
+| Option | What it does |
+| --- | --- |
+| `--pr 4` | Flash the newest Sticky build from pull request #4 |
+| `--file ~/Downloads/sticky-firmware-pr4.zip` | Flash a `firmware.bin` or artifact `.zip` you already downloaded |
+| `--port /dev/cu.usbmodem101` | Use this serial port instead of finding it automatically |
+| `--dry-run` | Do every check but write nothing |
+
+The first run sets up `esptool` in `~/.crossblink-flasher` and, to download
+builds, installs the GitHub CLI with Homebrew and asks you to sign in once
+(GitHub requires sign-in for build downloads). It refuses files that are not
+ESP32-S3 app images or are too large for the app slot.
+
+Under the hood it writes `firmware.bin` to the first app slot (`0x10000`) and
+blanks `otadata` (`0xe000`, 8 KB) so the bootloader starts that slot, since an
+earlier SD Card Firmware Update may have left the device booting the second
+slot. NVS, the bootloader and the partition table are not written.
+
 ## Command Line
 
 These instructions are for macOS and Linux. Windows users should use the web installer.
