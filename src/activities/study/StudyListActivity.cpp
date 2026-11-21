@@ -24,6 +24,8 @@ void StudyListActivity::onEnter() {
   uiReady = false;
   topIndex = 0;
   visibleRows = 1;
+  // Taps report the row's actionValue, so every row must carry its own index before the first render.
+  for (size_t i = 0; i < rows.size(); ++i) rows[i].actionValue = static_cast<int16_t>(i);
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &StudyListActivity::onRowEvent, this);
   app.setScreen(&StudyListActivity::listScreen, this);
