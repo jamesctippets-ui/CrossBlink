@@ -16,6 +16,7 @@
 ### Fixed
 
 - The documentation site and flasher now load with their styles and images when served from GitHub Pages at /CrossBlink/, and the site's top bar links to the Flasher.
+- Flasher: the device picker now lists every serial port instead of only Espressif ones, so a Sticky that reports another USB vendor ID shows up, and the page has troubleshooting steps for when it does not.
 - Study mode: choosing Quiz, Practice test or Match from a track no longer opens Flashcards instead.
 - Stay in the selected chapter when following EPUB Contents links, including links to positions within a chapter.
 - Indent EPUB blockquotes that rely on default margins (#956).
