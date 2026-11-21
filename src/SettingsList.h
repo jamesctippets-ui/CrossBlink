@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "AppCapabilities.h"
 #include "CrossPointSettings.h"
 #include "DeviceCapabilities.h"
 #include "KOReaderCredentialStore.h"
@@ -586,7 +587,8 @@ inline SettingInfo buildSideButtonActionSetting(const StrId nameId, uint8_t Cros
 // can use it directly; mutable device UI lists use getSettingsList(), which
 // returns an owned copy and can add SD-card font and dictionary options.
 // Four edge gesture entries are compiled only for touch devices.
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 104 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY =
+    104 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0) + (CROSSINK_APP_ONLINE_DICTIONARY ? 1 : 0);
 
 const std::vector<SettingInfo>& getBaseSettingsList();
 
@@ -764,7 +766,7 @@ inline void addSettingByName(std::vector<SettingInfo>& target, const std::vector
 
 inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> readerSettings;
-  readerSettings.reserve(12);
+  readerSettings.reserve(12 + (CROSSINK_APP_ONLINE_DICTIONARY ? 1 : 0));
   readerSettings.push_back(SettingInfo::Submenu(StrId::STR_READER_FONT_OPTIONS, SettingAction::ReaderFontOptions));
   readerSettings.push_back(SettingInfo::Submenu(StrId::STR_READER_PAGE_LAYOUT, SettingAction::ReaderPageLayout));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_STATUS_BARS, SettingAction::CustomiseStatusBar));
@@ -775,6 +777,9 @@ inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<
   addSettingByName(readerSettings, allSettings, StrId::STR_FOCUS_READING);
   addSettingByName(readerSettings, allSettings, StrId::STR_GUIDE_READING);
   addSettingByName(readerSettings, allSettings, StrId::STR_DICTIONARY);
+#if CROSSINK_APP_ONLINE_DICTIONARY
+  addSettingByName(readerSettings, allSettings, StrId::STR_ONLINE_DICTIONARY_FALLBACK);
+#endif
   addSettingByName(readerSettings, allSettings, StrId::STR_INDEXING_METHOD);
   return readerSettings;
 }

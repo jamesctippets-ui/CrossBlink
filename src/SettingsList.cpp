@@ -126,6 +126,10 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                             StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled, "guideReadingEnabled",
                             StrId::STR_CAT_READER));
+#if CROSSINK_APP_ONLINE_DICTIONARY
+    add(SettingInfo::Toggle(StrId::STR_ONLINE_DICTIONARY_FALLBACK, &CrossPointSettings::onlineDictionaryFallback,
+                            "onlineDictionaryFallback", StrId::STR_CAT_READER));
+#endif
     add(SettingInfo::Enum(StrId::STR_INDEXING_METHOD, &CrossPointSettings::indexingMethod,
                           {StrId::STR_INDEXING_INCREMENTAL, StrId::STR_INDEXING_FULL_SECTION}, "indexingMethod",
                           StrId::STR_CAT_READER));

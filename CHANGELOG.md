@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Added
+
+- Sticky: when the downloaded dictionary has no entry for a word, the reader quietly joins a saved Wi-Fi network, looks the word up in the free online Free Dictionary API (English), shows the definition, and turns Wi-Fi back off. Words already fetched are reused from the SD card without Wi-Fi. Turn it off with Settings > Reader > Online Dictionary Fallback.
+
 ## [v1.6.1] - 2026-10-03
 
 ### Added
