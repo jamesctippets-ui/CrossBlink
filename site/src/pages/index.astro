@@ -1,4 +1,5 @@
 ---
+import { withBase } from '../lib/base';
 import SiteLayout from '../layouts/SiteLayout.astro';
 import { getDocs } from '../lib/docs';
 
@@ -21,12 +22,12 @@ const featuredDocs = docs.filter((doc) =>
         Minimal reading stats and improved UX.
       </p>
       <div class="hero-actions">
-        <a class="button primary" href="/installation.html">Installation Instructions</a>
-        <a class="button" href="/reader-features.html">Explore features</a>
+        <a class="button primary" href={withBase("/installation.html")}>Installation Instructions</a>
+        <a class="button" href={withBase("/reader-features.html")}>Explore features</a>
       </div>
     </div>
     <img
-      src="/images/bitter-small-15-margin.jpg"
+      src={withBase("/images/bitter-small-15-margin.jpg")}
       alt="CrossInk on an X4 using 10pt Bitter font"
       class="hero-image"
       loading="eager"
