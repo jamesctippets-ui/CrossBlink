@@ -6,6 +6,7 @@
 #include <HalClock.h>
 #include <Logging.h>
 #include <SDCardManager.h>
+#include <esp_heap_caps.h>
 #if FREEINK_CAP_USB_MSC
 #include <UsbMassStorage.h>
 #endif
@@ -128,6 +129,15 @@ HalStorage::HalStorage()
 
 HalStorage::~HalStorage() = default;
 
+class HalStorage::StorageLock {
+ public:
+  StorageLock() : spiLock() { xSemaphoreTake(HalStorage::getInstance().storageMutex, portMAX_DELAY); }
+  ~StorageLock() { xSemaphoreGive(HalStorage::getInstance().storageMutex); }
+
+ private:
+  HalSpiBus::Lock spiLock;
+};
+
 // begin() and ready() are only called from setup, no need to acquire mutex for them
 
 bool HalStorage::begin() {
@@ -138,14 +148,15 @@ bool HalStorage::begin() {
 bool HalStorage::ready() const { return SDCard.ready(); }
 
 bool HalStorage::beginUsbDrive() {
-#if FREEINK_CAP_USB_MSC && FREEINK_SD_SDMMC
+#if FREEINK_CAP_USB_MSC
+  StorageLock lock;
   if (!usbDriveContext) {
     LOG_ERR("USB", "USB Drive context allocation failed");
     return false;
   }
   auto* const blockDevice = SDCard.detachFilesystemForRawAccess();
   if (!blockDevice) {
-    LOG_ERR("USB", "USB Drive requires a mounted SDMMC filesystem");
+    LOG_ERR("USB", "USB Drive requires a mounted SD filesystem");
     return false;
   }
   if (!usbDriveContext->massStorage.begin(blockDevice)) {
@@ -165,6 +176,7 @@ bool HalStorage::beginUsbDrive() {
 
 bool HalStorage::disconnectUsbDriveHost() {
 #if FREEINK_CAP_USB_MSC
+  StorageLock lock;
   return usbDriveContext && usbDriveContext->massStorage.disconnectHost();
 #else
   return false;
@@ -173,6 +185,7 @@ bool HalStorage::disconnectUsbDriveHost() {
 
 bool HalStorage::usbDriveHostSuspended() const {
 #if FREEINK_CAP_USB_MSC
+  StorageLock lock;
   return usbDriveContext && usbDriveContext->massStorage.hostSuspended();
 #else
   return false;
@@ -181,12 +194,14 @@ bool HalStorage::usbDriveHostSuspended() const {
 
 void HalStorage::endUsbDrive() {
 #if FREEINK_CAP_USB_MSC
+  StorageLock lock;
   if (usbDriveContext) usbDriveContext->massStorage.end();
 #endif
 }
 
 UsbDriveState HalStorage::usbDriveState() const {
 #if FREEINK_CAP_USB_MSC
+  StorageLock lock;
   if (!usbDriveContext) return UsbDriveState::Unsupported;
   switch (usbDriveContext->massStorage.state()) {
     case freeink::UsbMassStorageState::WaitingForHost:
@@ -210,22 +225,18 @@ UsbDriveState HalStorage::usbDriveState() const {
 
 // For the rest of the methods, we acquire the mutex to ensure thread safety
 
-class HalStorage::StorageLock {
- public:
-  StorageLock() : spiLock() { xSemaphoreTake(HalStorage::getInstance().storageMutex, portMAX_DELAY); }
-  ~StorageLock() { xSemaphoreGive(HalStorage::getInstance().storageMutex); }
-
- private:
-  HalSpiBus::Lock spiLock;
-};
-
 #define HAL_STORAGE_WRAPPED_CALL(method, ...) \
   HalStorage::StorageLock lock;               \
   return SDCard.method(__VA_ARGS__);
 
-void HalStorage::shutdown() {
+bool HalStorage::shutdown() {
   StorageLock lock;
-  SDCard.shutdown();
+  return SDCard.shutdown();
+}
+
+bool HalStorage::syncFilesystem() {
+  StorageLock lock;
+  return SDCard.syncFilesystem();
 }
 
 uint64_t HalStorage::totalBytes() const { return SDCard.sdTotalBytes(); }
@@ -244,6 +255,27 @@ bool HalStorage::readFileToStream(const char* path, Print& out, size_t chunkSize
 
 size_t HalStorage::readFileToBuffer(const char* path, char* buffer, size_t bufferSize, size_t maxBytes) {
   HAL_STORAGE_WRAPPED_CALL(readFileToBuffer, path, buffer, bufferSize, maxBytes);
+}
+
+bool HalStorage::readFileToString(const char* moduleName, const std::string& path, size_t cap, std::string& out) {
+  out.clear();
+  HalFile file;
+  if (!openFileForRead(moduleName, path, file)) return false;
+  const size_t size = file.fileSize();
+  if (file.isDirectory() || size > cap || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < size + 512) {
+    LOG_ERR(moduleName, "File too large or unreadable: %s", path.c_str());
+    file.close();
+    return false;
+  }
+  out.resize(size);
+  const bool readOk = size == 0 || file.read(out.data(), size) == static_cast<int>(size);
+  const bool closeOk = file.close();
+  if (!readOk || !closeOk) {
+    LOG_ERR(moduleName, "Could not read file: %s", path.c_str());
+    out.clear();
+    return false;
+  }
+  return true;
 }
 
 bool HalStorage::writeFile(const char* path, const String& content) {

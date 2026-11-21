@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "ReaderUtils.h"
 #include "activities/ActivityResult.h"
 #include "activities/home/FileBrowserActionActivity.h"
 #include "clippings/ClippingPreview.h"
+#include "components/TouchActionButtons.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -25,18 +27,25 @@ constexpr int DETAIL_START_Y = 70;
 constexpr int DETAIL_SIDE_MARGIN = 20;
 constexpr int DETAIL_BOTTOM_RESERVE = 55;
 constexpr int DETAIL_LINE_GAP = 6;
+
+Rect clippingHeaderRect(const GfxRenderer& renderer, const Rect& safe, const MappedInputManager& mappedInput) {
+  return TouchHeaderBackButton::headerRect(renderer, mappedInput, safe);
+}
+
+#if CROSSINK_APP_CAP_TOUCH
 constexpr int TOUCH_DETAIL_BUTTON_HEIGHT = 52;
 constexpr int TOUCH_DETAIL_PAGE_LABEL_RESERVE = 24;
 
-Rect clippingHeaderRect(const Rect& safe, const ThemeMetrics& metrics, const MappedInputManager& mappedInput) {
-  return Rect{safe.x, safe.y + metrics.topPadding, safe.width, TouchHeaderBackButton::height(metrics, mappedInput)};
-}
+constexpr int TOUCH_DETAIL_OPEN = 0;
+constexpr int TOUCH_DETAIL_DELETE = 1;
 
-Rect touchDetailOpenButtonRect(const Rect& safe, const ThemeMetrics& metrics) {
+TouchActionButtons::Layout touchDetailActions(const Rect& safe, const ThemeMetrics& metrics) {
   const int sidePadding = std::min(metrics.contentSidePadding, std::max(0, safe.width / 2 - 1));
-  return Rect{safe.x + sidePadding, safe.y + safe.height - metrics.verticalSpacing - TOUCH_DETAIL_BUTTON_HEIGHT,
-              std::max(1, safe.width - sidePadding * 2), TOUCH_DETAIL_BUTTON_HEIGHT};
+  const Rect container{safe.x + sidePadding, safe.y, std::max(1, safe.width - sidePadding * 2),
+                       safe.height - metrics.verticalSpacing};
+  return TouchActionButtons::vertical(container, 2, TOUCH_DETAIL_BUTTON_HEIGHT, metrics.verticalSpacing);
 }
+#endif
 
 void buildOneLineSnippetText(const std::string& text, std::string& out) {
   out.clear();
@@ -152,6 +161,10 @@ EpubReaderClippingListActivity::EpubReaderClippingListActivity(GfxRenderer& rend
 
 void EpubReaderClippingListActivity::onEnter() {
   Activity::onEnter();
+  {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
   selectedIndex = 0;
   topIndex = 0;
   visibleRows = 1;
@@ -178,13 +191,14 @@ int EpubReaderClippingListActivity::getDetailTextWidth() const {
 int EpubReaderClippingListActivity::getDetailLinesPerPage() const {
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int lineStep = renderer.getLineHeight(UI_10_FONT_ID) + DETAIL_LINE_GAP;
+  const int lineStep = renderer.getLineHeight(renderer.filenameFontId(UI_10_FONT_ID)) + DETAIL_LINE_GAP;
 #if CROSSINK_APP_CAP_TOUCH
   if (mappedInput.hasTouchHardware()) {
-    const Rect header = clippingHeaderRect(safe, metrics, mappedInput);
-    const Rect openButton = touchDetailOpenButtonRect(safe, metrics);
+    const Rect header = clippingHeaderRect(renderer, safe, mappedInput);
+    const auto actions = touchDetailActions(safe, metrics);
     const int textStart = header.y + header.height + metrics.verticalSpacing;
-    const int textBottom = openButton.y - metrics.verticalSpacing - TOUCH_DETAIL_PAGE_LABEL_RESERVE;
+    const int textBottom =
+        actions.buttons[TOUCH_DETAIL_OPEN].y - metrics.verticalSpacing - TOUCH_DETAIL_PAGE_LABEL_RESERVE;
     return std::max(1, (textBottom - textStart) / std::max(1, lineStep));
   }
 #endif
@@ -195,6 +209,11 @@ int EpubReaderClippingListActivity::getDetailLinesPerPage() const {
 int EpubReaderClippingListActivity::getDetailPageCount() const {
   if (detailLinesPerPage <= 0) return 1;
   return std::max(1, static_cast<int>((detailLines.size() + detailLinesPerPage - 1) / detailLinesPerPage));
+}
+
+bool EpubReaderClippingListActivity::canDeleteFromDetail() const {
+  // The Previous hint is free on the first page, including single-page clippings.
+  return !mappedInput.hasTouchHardware() && detailPage == 0;
 }
 
 void EpubReaderClippingListActivity::closeDetail() {
@@ -239,7 +258,7 @@ void EpubReaderClippingListActivity::rebuildDetailLayoutIfNeeded() {
   const int linesPerPage = getDetailLinesPerPage();
   if (textWidth == detailLayoutWidth && linesPerPage == detailLinesPerPage && !detailLines.empty()) return;
 
-  buildWrappedDetailLines(renderer, UI_10_FONT_ID, detailText, textWidth, detailLines);
+  buildWrappedDetailLines(renderer, renderer.filenameFontId(UI_10_FONT_ID), detailText, textWidth, detailLines);
   if (detailLines.empty()) detailLines.push_back("");
   detailLayoutWidth = textWidth;
   detailLinesPerPage = linesPerPage;
@@ -314,7 +333,7 @@ void EpubReaderClippingListActivity::showClippingActionMenu(const bool ignoreIni
 void EpubReaderClippingListActivity::loop() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect header = clippingHeaderRect(safe, metrics, mappedInput);
+  const Rect header = clippingHeaderRect(renderer, safe, mappedInput);
   if (TouchHeaderBackButton::wasTapped(mappedInput, header)) {
     if (detailMode) {
       closeDetail();
@@ -372,13 +391,20 @@ void EpubReaderClippingListActivity::loop() {
     int detailTouchBottom = safe.y + safe.height - DETAIL_BOTTOM_RESERVE;
 #if CROSSINK_APP_CAP_TOUCH
     if (mappedInput.hasTouchHardware()) {
-      const Rect openButton = touchDetailOpenButtonRect(safe, metrics);
-      if (mappedInput.wasTapInRect(openButton.x, openButton.y, openButton.width, openButton.height)) {
-        jumpToSelectedClipping();
-        return;
+      const auto actions = touchDetailActions(safe, metrics);
+      if (mappedInput.wasScreenTapped(touchX, touchY)) {
+        const int action = TouchActionButtons::indexAt(actions, touchX, touchY);
+        if (action == TOUCH_DETAIL_OPEN) {
+          jumpToSelectedClipping();
+          return;
+        }
+        if (action == TOUCH_DETAIL_DELETE) {
+          showClippingActionMenu(false);
+          return;
+        }
       }
       detailTouchTop = header.y + header.height + metrics.verticalSpacing;
-      detailTouchBottom = openButton.y;
+      detailTouchBottom = actions.buttons[TOUCH_DETAIL_OPEN].y;
     }
 #endif
     if (!longPressConfirmHandled && mappedInput.isScreenTouchLongPress(touchX, touchY, ReaderUtils::DELETE_HOLD_MS) &&
@@ -408,7 +434,9 @@ void EpubReaderClippingListActivity::loop() {
       }
     });
     buttonNavigator.onPreviousRelease([this] {
-      if (detailPage > 0) {
+      if (canDeleteFromDetail() && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+        showClippingActionMenu(false);
+      } else if (detailPage > 0) {
         detailPage--;
         requestUpdate();
       }
@@ -491,16 +519,18 @@ void EpubReaderClippingListActivity::listScreen(UiApp::ScreenType& screen, void*
 void EpubReaderClippingListActivity::buildListScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  screen.setContentMargin(fui::Insets{
-      static_cast<int16_t>(safe.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput)),
-      static_cast<int16_t>(renderer.getScreenWidth() - safe.x - safe.width),
-      static_cast<int16_t>(renderer.getScreenHeight() - safe.y - safe.height), static_cast<int16_t>(safe.x)});
+  setUiContentMargin(screen, renderer,
+                     fui::Insets{static_cast<int16_t>(TouchHeaderBackButton::contentTop(renderer, mappedInput, safe.y)),
+                                 static_cast<int16_t>(renderer.getScreenWidth() - safe.x - safe.width),
+                                 static_cast<int16_t>(renderer.getScreenHeight() - safe.y - safe.height),
+                                 static_cast<int16_t>(safe.x)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   const size_t count = CLIPPINGS.clippingCount();
   if (count == 0) {
     screen.centeredText(tr(STR_NO_CLIPPINGS), screen.theme().bodyText);
     return;
   }
+  FilenameUiFontScope fonts(uiTarget, renderer);
   fui::ListProps props;
   props.action = ACTION_ROW;
   props.inputMask = static_cast<uint16_t>(fui::InputTouch | fui::InputLongPress);
@@ -554,29 +584,32 @@ void EpubReaderClippingListActivity::renderDetail() {
   int textStartY = DETAIL_START_Y + contentY;
 #if CROSSINK_APP_CAP_TOUCH
   const bool showTouchControls = mappedInput.hasTouchHardware();
-  Rect openButton{};
+  TouchActionButtons::Layout actions;
   if (showTouchControls) {
-    const Rect header = clippingHeaderRect(safe, metrics, mappedInput);
+    const Rect header = clippingHeaderRect(renderer, safe, mappedInput);
+    FilenameUiFontScope fonts(uiTarget, renderer);
     TouchHeaderBackButton::draw(renderer, uiTarget, header, chapter, true);
     textStartY = header.y + header.height + metrics.verticalSpacing;
-    openButton = touchDetailOpenButtonRect(safe, metrics);
+    actions = touchDetailActions(safe, metrics);
   } else
 #endif
   {
-    const std::string title =
-        renderer.truncatedText(UI_12_FONT_ID, chapter, contentWidth - DETAIL_SIDE_MARGIN * 2, EpdFontFamily::BOLD);
-    const int titleX =
-        contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, title.c_str(), EpdFontFamily::BOLD)) / 2;
-    renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, title.c_str(), true, EpdFontFamily::BOLD);
+    const std::string title = renderer.truncatedText(renderer.filenameFontId(UI_12_FONT_ID), chapter,
+                                                     contentWidth - DETAIL_SIDE_MARGIN * 2, EpdFontFamily::BOLD);
+    const int titleX = contentX + (contentWidth - renderer.getTextWidth(renderer.filenameFontId(UI_12_FONT_ID),
+                                                                        title.c_str(), EpdFontFamily::BOLD)) /
+                                      2;
+    renderer.drawText(renderer.filenameFontId(UI_12_FONT_ID), titleX, 15 + contentY, title.c_str(), true,
+                      EpdFontFamily::BOLD);
   }
 
-  const int lineStep = renderer.getLineHeight(UI_10_FONT_ID) + DETAIL_LINE_GAP;
+  const int lineStep = renderer.getLineHeight(renderer.filenameFontId(UI_10_FONT_ID)) + DETAIL_LINE_GAP;
   const int textX = contentX + DETAIL_SIDE_MARGIN;
   const int firstLine = detailPage * detailLinesPerPage;
   const int lastLine = std::min(static_cast<int>(detailLines.size()), firstLine + detailLinesPerPage);
   int y = textStartY;
   for (int i = firstLine; i < lastLine; i++) {
-    renderer.drawText(UI_10_FONT_ID, textX, y, detailLines[i].c_str());
+    renderer.drawText(renderer.filenameFontId(UI_10_FONT_ID), textX, y, detailLines[i].c_str());
     y += lineStep;
   }
 
@@ -588,7 +621,8 @@ void EpubReaderClippingListActivity::renderDetail() {
     int pageLabelY = safe.y + safe.height - 35;
 #if CROSSINK_APP_CAP_TOUCH
     if (showTouchControls) {
-      pageLabelY = openButton.y - metrics.verticalSpacing - renderer.getLineHeight(SMALL_FONT_ID);
+      pageLabelY =
+          actions.buttons[TOUCH_DETAIL_OPEN].y - metrics.verticalSpacing - renderer.getLineHeight(SMALL_FONT_ID);
     }
 #endif
     renderer.drawText(SMALL_FONT_ID, contentX + contentWidth - DETAIL_SIDE_MARGIN - pageLabelWidth, pageLabelY,
@@ -597,20 +631,15 @@ void EpubReaderClippingListActivity::renderDetail() {
 
 #if CROSSINK_APP_CAP_TOUCH
   if (showTouchControls) {
-    renderer.fillRectDither(openButton.x, openButton.y, openButton.width, openButton.height, Color::White);
-    renderer.drawRect(openButton.x, openButton.y, openButton.width, openButton.height, true);
-    const char* label = tr(STR_OPEN);
-    const int labelX =
-        openButton.x + (openButton.width - renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD)) / 2;
-    const int labelY = openButton.y + (openButton.height - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
-    renderer.drawText(UI_10_FONT_ID, labelX, labelY, label, true, EpdFontFamily::BOLD);
+    const char* labels[] = {tr(STR_OPEN), tr(STR_DELETE)};
+    TouchActionButtons::draw(renderer, actions, labels, TOUCH_DETAIL_OPEN);
     return;
   }
 #endif
 
-  const auto labels =
-      mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_OPEN), detailPage > 0 ? tr(STR_DIR_UP) : "",
-                            detailPage < detailPageCount - 1 ? tr(STR_DIR_DOWN) : "");
+  const char* previousLabel = canDeleteFromDetail() ? tr(STR_DELETE) : (detailPage > 0 ? tr(STR_DIR_UP) : "");
+  const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_OPEN), previousLabel,
+                                            detailPage < detailPageCount - 1 ? tr(STR_DIR_DOWN) : "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, true);
 }
 
@@ -620,7 +649,7 @@ void EpubReaderClippingListActivity::render(RenderLock&&) {
   if (initialListRender && CLIPPINGS.clippingCount() > 0) {
     // Publish feedback before app.render() reads and lays out the clipping previews.
     // drawPopup flushes the framebuffer while this render still owns RenderLock.
-    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    GUI.drawPopup(renderer, tr(STR_LOADING));
     renderer.clearScreen();
   }
   initialListRender = false;
@@ -633,14 +662,14 @@ void EpubReaderClippingListActivity::render(RenderLock&&) {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect header = clippingHeaderRect(safe, metrics, mappedInput);
+  const Rect header = clippingHeaderRect(renderer, safe, mappedInput);
   if (mappedInput.hasTouchHardware()) {
     TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_CLIPPINGS), true);
   } else {
     GUI.drawHeader(renderer, header, tr(STR_CLIPPINGS), nullptr, true);
   }
   uiReady = false;
-  app.render();
+  renderUiApp(app, uiTarget);
   uiReady = true;
 
   const auto labels =

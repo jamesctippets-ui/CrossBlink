@@ -69,7 +69,7 @@ jobs:
         run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
 
       - name: Run cppcheck
-        run: pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high
+        run: pio check -e default --fail-on-defect low --fail-on-defect medium --fail-on-defect high
 
   build:
     # Firmware artifacts are validated on pull requests; release builds stay
@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [default, x4-pro, sticky]
+        environment: [default, x4-pro, sticky, eego_a4, eego_a4-debug]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -108,10 +108,32 @@ jobs:
       - name: Install PlatformIO Core
         run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
 
+      - name: Verify EEGO A4 build and release contracts
+        if: matrix.environment == 'eego_a4'
+        run: |
+          python3 scripts/test_eego_a4_release.py
+          python3 scripts/test_build_identity.py
+
       - name: Build ${{ matrix.environment }} firmware
         run: |
           set -euo pipefail
-          pio run -j1 -e ${{ matrix.environment }} | tee pio-${{ matrix.environment }}.log
+          # Environments with custom_sdkconfig (sticky) rebuild the Arduino IDF libs first. On a cold
+          # package cache that nested build installs a newer tool-scons over the one the outer build is
+          # still using, and the link step fails with "No module named SCons.Tool.FortranCommon". The
+          # rebuilt libs are kept, so a second run links normally.
+          if ! pio run -j1 -e ${{ matrix.environment }} | tee pio-${{ matrix.environment }}.log; then
+            echo "::warning::First ${{ matrix.environment }} build failed; retrying once (tool-scons swap on cold cache)"
+            pio run -j1 -e ${{ matrix.environment }} | tee pio-${{ matrix.environment }}.log
+          fi
+
+      - name: Upload Sticky firmware
+        # CrossBlink targets the Sticky, so keep its PR build downloadable for flashing test builds.
+        if: matrix.environment == 'sticky'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-firmware-pr${{ github.event.pull_request.number }}
+          path: .pio/build/sticky/firmware.bin
+          retention-days: 14
 
       - name: Extract firmware stats
         run: |
