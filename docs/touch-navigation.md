@@ -31,7 +31,7 @@ swipe on the main part of the Home screen. You do not need to start at the edge.
 | Swipe **down**  | Opens **Settings** |
 | Swipe **right** | Opens **Browse Files** (or **Library**, if **Swap Library/File Browser** is on) |
 | Swipe **up**    | Opens the Home menu |
-| Swipe **left**  | Shows the next recent book |
+| Swipe **left**  | Dashboard: opens the **Study** page with your study stats (on builds with Study mode; swipe right to come back). Minimal: shows the next recent book |
 | Tap the book cover | Opens the book |
 
 The **Lyra** Home screen has one swipe: swipe **left** to show the next recent

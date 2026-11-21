@@ -21,6 +21,38 @@ constexpr const char* kProgressPath = "/study/progress.jsonl";
 // Fixed on-disk record: id[24], due u32, interval u16, ease100 u16, reps u8, last u8, 2 reserved bytes.
 constexpr size_t kSrsRecordBytes = 36;
 
+// Progress log lines the reader writes are under 128 bytes; anything longer is not ours and is skipped.
+constexpr size_t kMaxLogLine = 160;
+
+void decodeSrsEntry(const uint8_t* raw, SrsEntry& entry) {
+  memcpy(&entry.due, raw + 24, 4);
+  memcpy(&entry.intervalDays, raw + 28, 2);
+  memcpy(&entry.ease100, raw + 30, 2);
+  entry.reps = raw[32];
+  entry.last = raw[33];
+}
+
+// Opens a schedule file and reads its header. Returns false (file closed) when it is missing or not ours.
+bool openSrsFile(const std::string& trackKey, HalFile& file, uint16_t& count) {
+  if (!isSafeTrackKey(trackKey)) return false;
+  const std::string path = std::string(kStudyRoot) + "/.srs/" + trackKey + ".bin";
+  if (!Storage.exists(path.c_str())) return false;
+  if (!Storage.openFileForRead("STUDY", path, file)) return false;
+  uint8_t header[6];
+  uint32_t magic = 0;
+  count = 0;
+  if (file.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+    memcpy(&magic, header, 4);
+    memcpy(&count, header + 4, 2);
+  }
+  if (magic != kSrsMagic || count > kMaxSrsRecords) {
+    LOG_ERR("STUDY", "Schedule %s is truncated or has an unknown format", path.c_str());
+    file.close();
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 bool loadManifest(std::vector<TrackInfo>& out) {
@@ -181,11 +213,7 @@ bool SrsStore::load(const std::string& trackKey) {
     Record r{};
     memcpy(r.id, raw, kMaxItemIdLen);
     r.id[kMaxItemIdLen] = '\0';
-    memcpy(&r.entry.due, raw + 24, 4);
-    memcpy(&r.entry.intervalDays, raw + 28, 2);
-    memcpy(&r.entry.ease100, raw + 30, 2);
-    r.entry.reps = raw[32];
-    r.entry.last = raw[33];
+    decodeSrsEntry(raw, r.entry);
     records.push_back(r);
   }
   file.close();
@@ -294,6 +322,70 @@ bool ProgressLog::logQuestion(const std::string& track, const std::string& quest
   char line[128];
   return append(line,
                 formatQuestionEvent(line, sizeof(line), track.c_str(), questionId.c_str(), correct, nowUnixSeconds()));
+}
+
+// ---- Stats ----
+
+void loadStudyStats(const std::vector<TrackInfo>& tracks, StudyTally& tally, std::vector<TrackStudyStats>& perTrack) {
+  perTrack.assign(tracks.size(), TrackStudyStats{});
+
+  // Schedules: streamed one 36-byte record at a time, nothing kept.
+  for (size_t i = 0; i < tracks.size(); ++i) {
+    HalFile file;
+    uint16_t count = 0;
+    if (!openSrsFile(tracks[i].key, file, count)) continue;
+    uint8_t raw[kSrsRecordBytes];
+    SrsEntry entry;
+    for (uint16_t r = 0; r < count; ++r) {
+      if (file.read(raw, sizeof(raw)) != static_cast<int>(sizeof(raw))) break;
+      decodeSrsEntry(raw, entry);
+      tally.addSchedule(entry, perTrack[i]);
+    }
+    file.close();
+  }
+
+  // Progress log: read in chunks, one short line at a time. Both buffers are on the stack (about 420 bytes): the log
+  // can be long, but nothing from it has to outlive this call.
+  HalFile file;
+  if (!Storage.exists(kProgressPath)) return;
+  if (!Storage.openFileForRead("STUDY", kProgressPath, file)) return;
+  char chunk[256];
+  char line[kMaxLogLine];
+  size_t lineLen = 0;
+  bool overflow = false;
+  LogEvent event;
+  const auto finishLine = [&]() {
+    if (!overflow && lineLen > 0 && parseLogEvent(line, lineLen, event)) {
+      tally.add(event);
+      for (size_t i = 0; i < tracks.size(); ++i) {
+        if (tracks[i].key != event.track) continue;
+        if (event.kind == LogEvent::Kind::Card) {
+          ++perTrack[i].cardReviews;
+        } else {
+          ++perTrack[i].questions;
+          if (event.ok) ++perTrack[i].questionsCorrect;
+        }
+        break;
+      }
+    }
+    lineLen = 0;
+    overflow = false;
+  };
+  int n = 0;
+  while ((n = file.read(chunk, sizeof(chunk))) > 0) {
+    for (int i = 0; i < n; ++i) {
+      const char c = chunk[i];
+      if (c == '\n' || c == '\r') {
+        finishLine();
+      } else if (lineLen < sizeof(line)) {
+        line[lineLen++] = c;
+      } else {
+        overflow = true;
+      }
+    }
+  }
+  finishLine();
+  file.close();
 }
 
 }  // namespace study

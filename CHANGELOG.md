@@ -13,6 +13,8 @@
 
 ### Changed
 
+- Dashboard Home on the Sticky: swiping left now opens a Study page with your study stats (cards due, day streak, quiz score, today's and all-time counts, and progress per track) instead of showing the next recent book. Tap a track to study it, or swipe right to go back to Home.
+
 ### Fixed
 
 - The documentation site and flasher now load with their styles and images when served from GitHub Pages at /CrossBlink/, and the site's top bar links to the Flasher.
