@@ -47,3 +47,13 @@
 
 // Every button-only reader uses the full-screen menu and its bounded sample preview.
 #define CROSSINK_APP_READER_SAMPLE_PREVIEW (!CROSSINK_APP_CAP_TOUCH)
+
+// Online dictionary fallback: when the active offline dictionary has no entry,
+// briefly join a saved Wi-Fi network and query a web dictionary. Sticky-only:
+// the S3 has the internal RAM headroom for Wi-Fi + TLS during a reader session,
+// while the C3 targets keep their current offline-only behavior.
+#if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
+#define CROSSINK_APP_ONLINE_DICTIONARY 1
+#else
+#define CROSSINK_APP_ONLINE_DICTIONARY 0
+#endif

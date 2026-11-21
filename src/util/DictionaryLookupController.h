@@ -183,11 +183,20 @@ class DictionaryLookupController {
   std::atomic<bool> lookupCancelled = false;
   std::atomic<bool> lookupCancelRequested = false;
   std::atomic<bool> lookupReadError = false;
+  // Online fallback (Sticky only). The worker sets onlineSearchStarted_ when a
+  // miss in the offline dictionary hands the word to OnlineDictionary; the
+  // main task then shows a "Searching online..." toast. onlineOutcome_ holds an
+  // OnlineDictionary::Result so the main task can explain a failed attempt.
+  std::atomic<bool> onlineSearchStarted_ = false;
+  std::atomic<uint8_t> onlineOutcome_ = 0;
+  bool onlineToastShown_ = false;
 
   void runLookup();
   void handleLookupFailed();
   void showReadError();
   void showMemoryErrorAndReset();
+  void showOnlineSearchToast();
+  void showOnlineFailureIfAny();
   static void progressCallback(void* ctx, int percent);
   static bool cancelCallback(void* ctx);
 };
