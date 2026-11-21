@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- Flasher: installing right after a new build is published no longer fails with a checksum error. The page now downloads the build list and the firmware from the same published version instead of a branch that GitHub caches for a few minutes. The same applies to study packs.
 - Study mode: long questions, answers and explanations are no longer cut off; they continue on the next page.
 - The documentation site and flasher now load with their styles and images when served from GitHub Pages at /CrossBlink/, and the site's top bar links to the Flasher.
 - Flasher: the device picker now lists every serial port instead of only Espressif ones, so a Sticky that reports another USB vendor ID shows up, and the page has troubleshooting steps for when it does not.
