@@ -14,7 +14,8 @@
 #
 # Usage (Terminal):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/jamesctippets-ui/crossblink/main/scripts/flash-sticky.sh)
-#   ./scripts/flash-sticky.sh                 # latest build from main
+#   ./scripts/flash-sticky.sh                 # opens Sticky Hub, a local web page (flash + study pack)
+#   ./scripts/flash-sticky.sh --main          # flash the latest build from main, in the Terminal
 #   ./scripts/flash-sticky.sh --pr 4          # latest build from pull request #4
 #   ./scripts/flash-sticky.sh --file ~/Downloads/firmware.bin
 #   ./scripts/flash-sticky.sh --help
@@ -24,6 +25,10 @@
 set -euo pipefail
 
 REPO="${CROSSBLINK_REPO:-jamesctippets-ui/crossblink}"
+# Branch the web page script is downloaded from when this script is not run from a clone.
+RAW_REF="${CROSSBLINK_REF:-main}"
+# Set by Sticky Hub when it runs this script in the background: never stop to ask anything.
+NONINTERACTIVE="${CROSSBLINK_NONINTERACTIVE:-0}"
 TOOL_HOME="${CROSSBLINK_FLASHER_HOME:-$HOME/.crossblink-flasher}"
 ESPTOOL_VERSION="4.8.1"
 CHIP="esp32s3"
@@ -34,7 +39,7 @@ APP_SLOT_SIZE=6553600 # 0x640000, app0 size in partitions.csv
 ESP32S3_CHIP_ID=9     # chip id field in the ESP app image header
 BAUD=921600
 
-SOURCE="main"
+SOURCE=""
 PR_NUMBER=""
 FIRMWARE_FILE=""
 PORT=""
@@ -65,8 +70,12 @@ Flash CrossBlink firmware to a Seeed reTerminal Sticky over USB.
 
 Your SD card and settings are not touched. Only the app firmware is replaced.
 
+With no options it opens Sticky Hub, a local web page with a Flash button and a study pack
+uploader. Any of the options below runs the flasher in the Terminal instead.
+
 Options:
-  --main          Use the latest Sticky build from the main branch (default).
+  --web           Open Sticky Hub (the default when no options are given).
+  --main          Use the latest Sticky build from the main branch.
   --pr NUMBER     Use the latest Sticky build from pull request NUMBER.
   --file PATH     Flash a firmware.bin (or the .zip GitHub gives you) you already downloaded.
   --port PATH     Serial port to use, for example /dev/cu.usbmodem101. Found automatically if left out.
@@ -79,6 +88,7 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --main) SOURCE="main" ;;
+    --web) SOURCE="web" ;;
     --pr)
       [ $# -ge 2 ] || die "--pr needs a pull request number, for example --pr 4"
       SOURCE="pr"
@@ -107,6 +117,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# No source chosen: the web page when run by hand with no options, otherwise main.
+if [ -z "$SOURCE" ]; then
+  if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ] && [ -z "$PORT" ]; then
+    SOURCE="web"
+  else
+    SOURCE="main"
+  fi
+fi
+
 if [ "$SOURCE" = "pr" ]; then
   case "$PR_NUMBER" in
     '' | *[!0-9]*) die "--pr needs a number, for example --pr 4" ;;
@@ -116,6 +135,10 @@ fi
 # Prompts read from the terminal, so they still work when the script itself is piped in.
 ask() {
   local prompt="$1" reply=""
+  if [ "$NONINTERACTIVE" = "1" ]; then
+    printf '%s' "$reply"
+    return
+  fi
   if [ -r /dev/tty ]; then
     printf '%s' "$prompt" >/dev/tty
     IFS= read -r reply </dev/tty || reply=""
@@ -166,6 +189,10 @@ ensure_esptool() {
 }
 
 ensure_gh() {
+  if [ "$NONINTERACTIVE" = "1" ]; then
+    command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && return
+    die "The GitHub CLI is not installed or not signed in. Run 'gh auth login' in Terminal (or restart Sticky Hub, which sets it up), or flash a file you downloaded."
+  fi
   if ! command -v gh >/dev/null 2>&1; then
     say "Downloading builds from GitHub uses the GitHub CLI (gh), which is not installed."
     if command -v brew >/dev/null 2>&1; then
@@ -290,6 +317,51 @@ find_port() {
 }
 
 # --- Main ------------------------------------------------------------------------------------
+
+# --- Web page mode ---------------------------------------------------------------------------
+
+# Find this script and sticky_hub.py next to it (a clone), or download both from GitHub
+# (the curl one-liner, where this script has no file of its own).
+start_web() {
+  local self_dir="" script_path hub_path
+  case "${BASH_SOURCE[0]:-}" in
+    /dev/fd/* | /proc/* | "") ;;
+    *) self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" ;;
+  esac
+  if [ -n "$self_dir" ] && [ -f "$self_dir/sticky_hub.py" ]; then
+    script_path="$self_dir/$(basename "${BASH_SOURCE[0]}")"
+    hub_path="$self_dir/sticky_hub.py"
+  else
+    step "Downloading Sticky Hub"
+    mkdir -p "$TOOL_HOME/bin"
+    local raw="https://raw.githubusercontent.com/$REPO/$RAW_REF/scripts"
+    if ! curl -fsSL "$raw/flash-sticky.sh" -o "$TOOL_HOME/bin/flash-sticky.sh" ||
+      ! curl -fsSL "$raw/sticky_hub.py" -o "$TOOL_HOME/bin/sticky_hub.py"; then
+      die "Could not download Sticky Hub from $raw. Check your internet connection."
+    fi
+    chmod +x "$TOOL_HOME/bin/flash-sticky.sh"
+    script_path="$TOOL_HOME/bin/flash-sticky.sh"
+    hub_path="$TOOL_HOME/bin/sticky_hub.py"
+  fi
+
+  ensure_esptool
+  # Set up GitHub downloads now, while there is a Terminal to sign in from. The page still
+  # works without it for flashing a downloaded file and for the study pack.
+  if ! (ensure_gh); then
+    warn "GitHub downloads are not set up. You can still flash a file you downloaded and send study packs."
+  fi
+
+  step "Starting Sticky Hub"
+  CROSSBLINK_FLASHER_HOME="$TOOL_HOME" CROSSBLINK_REPO="$REPO" \
+    "$ESPTOOL_PY" "$hub_path" --script "$script_path" --repo "$REPO"
+}
+
+if [ "$SOURCE" = "web" ]; then
+  start_web
+  exit 0
+fi
+
+# --- Terminal mode ---------------------------------------------------------------------------
 
 say "${BOLD}CrossBlink USB flasher for the Seeed reTerminal Sticky${RESET}"
 say "Replaces only the app firmware. Your SD card, books and settings are not touched."

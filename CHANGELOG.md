@@ -2,7 +2,8 @@
 
 ### Added
 
-- Flash the Sticky over USB from a Mac with `scripts/flash-sticky.sh`. It downloads the latest Sticky build from main or a pull request, finds the device, and replaces only the app firmware, so the SD card and settings are kept.
+- Sticky Hub, a local web page on the Mac (started by `scripts/flash-sticky.sh`), flashes the Sticky over USB with the latest build from main, a pull request, or a downloaded file, replacing only the app firmware so the SD card and settings are kept.
+- Sticky Hub also copies a Study-App study pack to `/study/` over the reader's Wi-Fi File Transfer, keeping the reader's study progress.
 
 ## [v1.6.1] - 2026-10-03
 
