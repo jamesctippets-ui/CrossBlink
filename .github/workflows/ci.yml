@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [default, x4-pro, eego_a4, eego_a4-debug, sticky]
+        environment: [default, x4-pro, sticky, eego_a4, eego_a4-debug]
     steps:
       - uses: actions/checkout@v6
         with:
