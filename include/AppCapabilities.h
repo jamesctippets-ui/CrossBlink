@@ -39,6 +39,12 @@
 #endif
 #endif
 
+// Cert Study Hub study mode (flashcards, quiz, practice test, match). Its screens are touch-driven, so it ships on
+// touch builds (the Sticky). Define CROSSINK_APP_STUDY_MODE=0 in platformio.local.ini to leave it out.
+#ifndef CROSSINK_APP_STUDY_MODE
+#define CROSSINK_APP_STUDY_MODE CROSSINK_APP_CAP_TOUCH
+#endif
+
 // Every button-only reader uses the full-screen menu and its bounded sample preview.
 #define CROSSINK_APP_READER_SAMPLE_PREVIEW (!CROSSINK_APP_CAP_TOUCH)
 

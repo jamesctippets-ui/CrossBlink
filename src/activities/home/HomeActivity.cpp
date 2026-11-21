@@ -25,6 +25,8 @@
 #include "../reader/BookStatsActivity.h"
 #include "../reader/BookStatsTracking.h"
 #include "../reader/EpubReaderUtils.h"
+#include "../study/StudyHomeActivity.h"
+#include "AppCapabilities.h"
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
@@ -62,6 +64,7 @@ enum class HomeMenuAction {
   Bookmarks,
   FileTransfer,
   Settings,
+  Study,
 };
 
 struct HomeMenuEntry {
@@ -71,7 +74,7 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 8;
+  static constexpr int kCapacity = 10;
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -247,6 +250,9 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasPlugins, bool hasReadin
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
   }
 
+#if CROSSINK_APP_STUDY_MODE
+  items.push({tr(STR_STUDY), Text, HomeMenuAction::Study});
+#endif
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
 }
@@ -274,6 +280,9 @@ HomeMenuEntries buildMinimalMenuItems(bool hasPlugins, bool hasReadingStats, boo
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
   }
+#if CROSSINK_APP_STUDY_MODE
+  items.push({tr(STR_STUDY), Text, HomeMenuAction::Study});
+#endif
 
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   return items;
@@ -1470,6 +1479,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::FileTransfer:
             onFileTransferOpen();
             break;
+          case HomeMenuAction::Study:
+            onStudyOpen();
+            break;
           case HomeMenuAction::ContinueReading:
           case HomeMenuAction::Settings:
             break;
@@ -1716,6 +1728,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::Settings:
         onSettingsOpen();
+        break;
+      case HomeMenuAction::Study:
+        onStudyOpen();
         break;
     }
   };
@@ -2361,6 +2376,15 @@ void HomeActivity::onReadingStatsOpen() {
       requestUpdate();
     });
   }
+}
+
+void HomeActivity::onStudyOpen() {
+  auto study = makeUniqueNoThrow<StudyHomeActivity>(renderer, mappedInput);
+  if (!study) {
+    LOG_ERR("HOME", "Cannot allocate the Study activity");
+    return;
+  }
+  startActivityForResult(std::move(study), [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void HomeActivity::onSavedItemsOpen() {
