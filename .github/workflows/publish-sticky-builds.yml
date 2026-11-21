@@ -1,0 +1,131 @@
+name: Publish Sticky builds
+
+# Copies each Sticky firmware build (the `sticky-firmware-main` artifact from
+# "Sticky firmware (main)" and `sticky-firmware-pr<N>` from "CI (build)") to the
+# `sticky-builds` branch, so the browser flasher (site/public/flash/) can fetch
+# them from raw.githubusercontent.com, which allows cross-origin downloads.
+# GitHub Actions artifacts need a signed-in API call, so a web page cannot use
+# them directly.
+#
+# Layout of the branch (always one commit, replaced on every publish so old
+# binaries do not pile up in history):
+#   index.json               {"updated": ..., "builds": [{"id","label","path","sha","built","size","sha256","pr","title"}]}
+#   main/firmware.bin        latest build of main
+#   pr-<N>/firmware.bin      latest build of each open pull request
+#
+# Only same-repository runs are published, and the artifact is only copied,
+# never executed.
+
+on:
+  workflow_run:
+    workflows: ["CI (build)", "Sticky firmware (main)"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-sticky-builds
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+jobs:
+  publish:
+    # CI's overall result can be red for reasons unrelated to the Sticky build
+    # (another job), so publish whenever the run produced a Sticky artifact.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Find Sticky artifacts in the run
+        id: find
+        run: |
+          set -euo pipefail
+          mkdir -p incoming
+          if [ -z "${RUN_ID}" ]; then
+            echo "Manual run: only pruning closed pull requests and rebuilding the index."
+            exit 0
+          fi
+          gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | select(.name | test("^sticky-firmware-(main|pr[0-9]+)$")) | [.id, .name] | @tsv' \
+            > artifacts.tsv
+          if [ ! -s artifacts.tsv ]; then
+            echo "No Sticky artifact in run ${RUN_ID}; nothing new to publish."
+            exit 0
+          fi
+          while IFS=$'\t' read -r id name; do
+            slot="${name#sticky-firmware-}"
+            case "$slot" in
+              main) dir=main ;;
+              pr*) dir="pr-${slot#pr}" ;;
+            esac
+            mkdir -p "incoming/${dir}"
+            gh api "repos/${REPO}/actions/artifacts/${id}/zip" > "incoming/${dir}.zip"
+            unzip -q -o "incoming/${dir}.zip" -d "incoming/${dir}"
+            rm "incoming/${dir}.zip"
+            test -f "incoming/${dir}/firmware.bin"
+            echo "Got ${name} -> ${dir}"
+          done < artifacts.tsv
+
+      - name: Update the sticky-builds branch
+        run: |
+          set -euo pipefail
+          git init -q site
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git fetch -q --depth 1 origin sticky-builds; then
+            git checkout -q FETCH_HEAD -- . 2>/dev/null || true
+          fi
+
+          # Bring in what this run built.
+          for dir in ../incoming/*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            mkdir -p "$name"
+            cp "$dir/firmware.bin" "$name/firmware.bin"
+            if [ "$name" = main ]; then pr=""; else pr="${name#pr-}"; fi
+            title=""
+            if [ -n "$pr" ]; then
+              title="$(gh api "repos/${REPO}/pulls/${pr}" --jq .title 2>/dev/null || true)"
+            fi
+            jq -n --arg sha "${HEAD_SHA}" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --argjson size "$(stat -c %s "$name/firmware.bin")" \
+              --arg sha256 "$(sha256sum "$name/firmware.bin" | cut -d' ' -f1)" \
+              --arg pr "$pr" --arg title "$title" \
+              '{sha: $sha, built: $built, size: $size, sha256: $sha256, pr: ($pr | if . == "" then null else tonumber end), title: $title}' \
+              > "$name/info.json"
+          done
+
+          # Drop builds of pull requests that are no longer open.
+          open_prs=" $(gh api "repos/${REPO}/pulls?state=open&per_page=100" --jq '.[].number' | tr '\n' ' ') "
+          for dir in pr-*/; do
+            [ -d "$dir" ] || continue
+            n="${dir#pr-}"; n="${n%/}"
+            case "$open_prs" in
+              *" $n "*) ;;
+              *) echo "Removing closed PR #$n"; rm -rf "$dir" ;;
+            esac
+          done
+
+          # Rebuild the index: main first, then pull requests newest first.
+          {
+            for dir in main $(ls -d pr-* 2>/dev/null | sed 's/^pr-//' | sort -rn | sed 's/^/pr-/'); do
+              [ -f "$dir/info.json" ] || continue
+              jq --arg id "$dir" '. + {id: $id, path: ($id + "/firmware.bin"),
+                label: (if .pr then "#\(.pr) \(.title)" else "Latest main" end)}' "$dir/info.json"
+            done
+          } | jq -s --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{updated: $updated, builds: .}' > index.json
+          cat index.json
+
+          git checkout -q --orphan publish
+          git add -A
+          git commit -q -m "Publish Sticky builds ($(date -u +%Y-%m-%d))"
+          git push -q --force origin publish:sticky-builds

@@ -21,6 +21,9 @@ Re-export and copy again whenever the app's content changes; the reader's own sc
 
 The format is defined in the Study-App's `EINK_STUDY_PACK.md`.
 
+Over a USB cable, the [CrossBlink Flasher](https://jamesctippets-ui.github.io/CrossBlink/flash/) page in Chrome sends
+the latest published pack: leave the reader on Home, tick the tracks and press **Send to Sticky**.
+
 ## Modes
 
 | Mode | What it does |
