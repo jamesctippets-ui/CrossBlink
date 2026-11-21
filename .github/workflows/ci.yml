@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [default, x4-pro, eego_a4, eego_a4-debug]
+        environment: [default, x4-pro, sticky, eego_a4, eego_a4-debug]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -118,6 +118,15 @@ jobs:
         run: |
           set -euo pipefail
           pio run -j1 -e ${{ matrix.environment }} | tee pio-${{ matrix.environment }}.log
+
+      - name: Upload Sticky firmware
+        # CrossBlink targets the Sticky, so keep its PR build downloadable for flashing test builds.
+        if: matrix.environment == 'sticky'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-firmware-pr${{ github.event.pull_request.number }}
+          path: .pio/build/sticky/firmware.bin
+          retention-days: 14
 
       - name: Extract firmware stats
         run: |
