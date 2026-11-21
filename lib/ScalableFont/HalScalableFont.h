@@ -1,5 +1,6 @@
 #pragma once
 #if CROSSINK_SCALABLE_FONTS
+#include <ComplexShaper.h>
 #include <EpdFontFamily.h>
 #include <FtFont.h>
 #include <HalStorage.h>
@@ -10,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "FontLoadError.h"
 #include "ScalableFontSizing.h"
 
 // Borrows the app's render mutex when already held; otherwise owns it for
@@ -30,16 +32,34 @@ class ScalableFontAccess {
 // existing 2-bit and fractional-metric conventions. Call under RenderLock.
 class HalScalableFont {
  public:
+  // Optional rasterization may fill empty slots, never evict visible-page pixels.
+  // Hold the render lock for the lifetime of this scope.
+  class IdlePrewarmScope {
+   public:
+    IdlePrewarmScope();
+    ~IdlePrewarmScope();
+    IdlePrewarmScope(const IdlePrewarmScope&) = delete;
+    IdlePrewarmScope& operator=(const IdlePrewarmScope&) = delete;
+
+   private:
+    ScalableFontAccess access_;
+    bool previous_;
+  };
+  enum class BitmapPreparation { Ready, Skipped, Failed };
+  // Under IdlePrewarmScope: refusal is expected cache pressure, not a font error.
+  static BitmapPreparation prepareIdleBitmap(const EpdFontData* data, const EpdGlyph* glyph);
   static constexpr size_t MaxFileBytes = 2 * 1024 * 1024;
+  static constexpr size_t MaxFilenameFileBytes = 32 * 1024 * 1024;
   static constexpr size_t MaxFamilyBytes = 6 * 1024 * 1024;
   static constexpr size_t ReaderReserveBytes = 1024 * 1024;
   struct Info {
     char family[64] = {};
     uint8_t style = 0;
+    bool variable = false;
   };
   // Temporary uses a per-open identity and streams large faces; never persist
   // its layouts. Auto and Stream retain content-based reader cache identities.
-  enum class FileMode { Auto, Stream, Temporary };
+  enum class FileMode { Auto, Stream, Temporary, Filename };
   HalScalableFont() = default;
   ~HalScalableFont();
   HalScalableFont(const HalScalableFont&) = delete;
@@ -52,18 +72,22 @@ class HalScalableFont {
   // The caller must unregister every EpdFont returned by atSize() before
   // changing options because their cached metrics are rebuilt in place.
   bool setRenderOptions(const freeink::font::FtFont::RenderOptions& options);
-  static bool fileSize(const char* path, size_t& size);
+  static bool fileSize(const char* path, size_t& size, size_t limit = MaxFileBytes, FontLoadError* error = nullptr);
   static bool prepareFamily(size_t bytes, size_t faces);
   size_t fileBytes() const { return fileBytes_; }
   // OpenType's whole-file checksum is advisory: some usable fonts ship with
   // stale checksums, so callers must combine this with a real load failure.
   bool integrityMismatch() const { return integrityMismatch_; }
   bool lastFailureLooksLikeFontData() const { return fontDataFailure_; }
+  FontLoadError lastLoadError() const { return lastLoadError_; }
   bool hasCodepoint(uint32_t cp);
   bool probeGlyph(uint32_t cp, uint8_t points);
-  static bool inspectFile(const char* path, Info& info, bool* unavailable = nullptr);
+  static bool inspectFile(const char* path, Info& info, bool* unavailable = nullptr, size_t limit = MaxFileBytes,
+                          FontLoadError* error = nullptr);
   static uint32_t renderingRevision();
   uint32_t fingerprint() const { return hash_; }
+  // Reads metadata through the already-owned source; never reopens an SD reader.
+  bool copyFamilyName(char* name, size_t capacity);
   const EpdFont* atSize(uint8_t points);
 
  private:
@@ -75,12 +99,17 @@ class HalScalableFont {
     // Returned metrics survive subsequent lookups in the same draw operation.
     EpdGlyph glyphs[32]{};
     uint8_t cursor = 0;
+    std::unique_ptr<ComplexShaper> shaper;
   };
   static const EpdGlyph* glyph(void* ctx, uint32_t cp);
   static const uint8_t* bitmap(void* ctx, const EpdGlyph* glyph);
   static bool covers(void* ctx, uint32_t cp);
   static int8_t kerning(void* ctx, uint32_t left, uint32_t right);
   static uint32_t ligature(void* ctx, uint32_t left, uint32_t right);
+  static bool shape(void* ctx, const char* text, std::string* out);
+  static int32_t shapingAdvance(void* ctx, uint32_t glyph);
+  static uint8_t* loadShapingTable(void* ctx, uint32_t tag, uint32_t* length);
+  bool readSource(size_t offset, uint8_t* buffer, size_t count);
   static unsigned long streamRead(void* ctx, unsigned long offset, unsigned char* buffer, unsigned long count);
   static constexpr size_t StreamWindowBytes = 1024;
   static constexpr size_t StreamWindowCount = 4;
@@ -96,6 +125,7 @@ class HalScalableFont {
   bool streamFailureLogged_ = false;
   bool integrityMismatch_ = false;
   bool fontDataFailure_ = false;
+  FontLoadError lastLoadError_ = FontLoadError::None;
   uint32_t integrityChecksum_ = 0;
   uint32_t ligatureGlyphs_[5] = {};
   uint32_t hash_ = 0;
@@ -117,6 +147,9 @@ class HalScalableFont {
   StreamWindow streamWindows_[StreamWindowCount]{};
   size_t nextStreamWindow_ = 0;
   bool streamed_ = false;
+  bool drawsIndic_ = false;
+  const uint8_t* sourceBytes_ = nullptr;
+  size_t sourceSize_ = 0;
   // Declared last so it releases borrowed bytes/the stream before their owners.
   freeink::font::FtFont font_;
 };

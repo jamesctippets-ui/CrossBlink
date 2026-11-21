@@ -5,6 +5,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
+#include <PrintSerialization.h>
 #include <Serialization.h>
 
 #include <algorithm>
@@ -26,7 +27,10 @@ void* ImageBlock::extractContext = nullptr;
 ImageBlock::ExtractFn ImageBlock::extractFn = nullptr;
 ImageBlock::SeedCacheFn ImageBlock::seedCacheFn = nullptr;
 
-void ImageBlock::setExtractor(void* context, ExtractFn extract, SeedCacheFn seedCache) {
+ImageBlock::LoadFn ImageBlock::loadFn = nullptr;
+
+void ImageBlock::setExtractor(void* context, ExtractFn extract, SeedCacheFn seedCache, LoadFn load) {
+  loadFn = load;
   extractContext = context;
   extractFn = extract;
   seedCacheFn = seedCache;
@@ -35,12 +39,18 @@ void ImageBlock::setExtractor(void* context, ExtractFn extract, SeedCacheFn seed
 namespace {
 
 std::string getCachePath(const std::string& imagePath) {
-  // Replace extension with .pxc (pixel cache)
-  size_t dotPos = imagePath.rfind('.');
+  // PNG revision 3 refreshes prior nearest-neighbor pixels after area mapping.
+  // Other formats retain revision 2 (the progressive JPEG correction).
+  const size_t dotPos = imagePath.rfind('.');
+  const bool png = dotPos != std::string::npos && imagePath.size() - dotPos == 4 &&
+                   (imagePath[dotPos + 1] == 'p' || imagePath[dotPos + 1] == 'P') &&
+                   (imagePath[dotPos + 2] == 'n' || imagePath[dotPos + 2] == 'N') &&
+                   (imagePath[dotPos + 3] == 'g' || imagePath[dotPos + 3] == 'G');
+  const char* suffix = png ? "_png_v3.pxc" : "_v2.pxc";
   if (dotPos != std::string::npos) {
-    return imagePath.substr(0, dotPos) + ".pxc";
+    return imagePath.substr(0, dotPos) + suffix;
   }
-  return imagePath + ".pxc";
+  return imagePath + suffix;
 }
 
 // Half-open image-local bounds shared by retained and streamed PXC rendering.
@@ -262,14 +272,14 @@ RetainedPxcEntry* prepareRetainedPxcEntry(const size_t pixelBytes) {
 }
 
 bool renderCachedPixels(GfxRenderer& renderer, const uint8_t* pixels, const uint16_t cachedWidth,
-                        const uint16_t cachedHeight, const int x, const int y) {
+                        const uint16_t cachedHeight, const int x, const int y, const bool imageGrayscale) {
   if (!pixels) return false;
   const auto clip = cachedImageClip(renderer, x, y, cachedWidth, cachedHeight);
   if (clip.empty()) return true;
 
   const int bytesPerRow = (cachedWidth + 3) / 4;
   DirectPixelWriter pw;
-  pw.init(renderer);
+  pw.init(renderer, imageGrayscale);
   for (int row = clip.y0; row < clip.y1; ++row) {
     const uint8_t* rowBuffer = pixels + static_cast<size_t>(row) * bytesPerRow;
     pw.beginRow(y + row);
@@ -283,12 +293,13 @@ bool renderCachedPixels(GfxRenderer& renderer, const uint8_t* pixels, const uint
 }
 
 bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x, int y, int expectedWidth,
-                     int expectedHeight) {
+                     int expectedHeight, const bool imageGrayscale = true) {
   // Cache generation invalidates retained entries before overwriting a PXC
   // path, so repeated grayscale strips can avoid storage I/O entirely.
   if (auto* retained = findRetainedPxcEntry(cachePath, expectedWidth, expectedHeight)) {
     touchRetainedPxcEntry(*retained);
-    return renderCachedPixels(renderer, retained->pixels.get(), retained->width, retained->height, x, y);
+    return renderCachedPixels(renderer, retained->pixels.get(), retained->width, retained->height, x, y,
+                              imageGrayscale);
   }
 
   FsFile cacheFile;
@@ -327,7 +338,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
       LOG_INF("EPS", "Retained PXC in PSRAM: bytes=%u total=%u entries=2 dimensions=%ux%u",
               static_cast<unsigned>(pixelBytes), static_cast<unsigned>(retainedPxcCapacity), cachedWidth, cachedHeight);
       MemoryBudget::logEpubHeapPools("pxc retained");
-      return renderCachedPixels(renderer, retained->pixels.get(), cachedWidth, cachedHeight, x, y);
+      return renderCachedPixels(renderer, retained->pixels.get(), cachedWidth, cachedHeight, x, y, imageGrayscale);
     }
     // A short read must never leave an entry that could be mistaken for a
     // complete cache payload. Keep its allocation for a later retry.
@@ -361,7 +372,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   }
 
   DirectPixelWriter pw;
-  pw.init(renderer);
+  pw.init(renderer, imageGrayscale);
 
   const size_t dataOffset = 4U + static_cast<size_t>(clip.y0) * static_cast<size_t>(bytesPerRowInt);
   if (!cacheFile.seek(dataOffset)) {
@@ -436,6 +447,8 @@ void ImageBlock::prepareCache() const {
   Storage.remove((cache + ".optimizer.tmp").c_str());
   Storage.remove((cache + ".optimizer.source").c_str());
   if (seedCacheFn && seedCacheFn(extractContext, sourcePath.c_str(), width, height, cache.c_str())) return;
+  // JPEG/PNG may decode straight from PSRAM in render(); GIF keeps its file path.
+  if (loadFn && psramHeapAvailable() && ImageDecoderFactory::supportsMemorySource(imagePath)) return;
   if (extractFn && !Storage.exists(imagePath.c_str()) &&
       !extractFn(extractContext, sourcePath.c_str(), imagePath.c_str())) {
     LOG_ERR("IMG", "Image preflight extraction failed: %s", sourcePath.c_str());
@@ -470,21 +483,22 @@ void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int
   }
 }
 
-void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const bool foregroundBlack) {
+bool ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const bool foregroundBlack,
+                        const bool imageGrayscale) {
   // The font-prewarm scan pass only accumulates glyphs; an image contributes
   // none, and its DirectPixelWriter output bypasses the renderer's scan-mode
   // suppression, so it would otherwise do a full (discarded) cache render every
   // page view. Skip it here. The image still draws in the real BW/grayscale
   // passes; on first view this just moves the one-time decode to the BW pass.
   FontCacheManager* fcm = renderer.getFontCacheManager();
-  if (fcm && fcm->isScanning()) return;
+  if (fcm && fcm->isScanning()) return true;
 
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
 
   if (width <= 0 || height <= 0) {
     LOG_ERR("IMG", "Invalid image size: %dx%d", width, height);
-    return;
+    return true;
   }
 
   // Reject only fully off-screen images. Decoders and cache rendering clip
@@ -492,7 +506,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   if (x >= screenWidth || y >= screenHeight || x + width <= 0 || y + height <= 0) {
     LOG_ERR("IMG", "Invalid render position: (%d,%d) size (%dx%d) screen (%dx%d)", x, y, width, height, screenWidth,
             screenHeight);
-    return;
+    return true;
   }
   const bool fullyOnScreen = x >= 0 && y >= 0 && x + width <= screenWidth && y + height <= screenHeight;
 
@@ -503,46 +517,63 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   // is orientation-aware and returns true when no strip is active, so the BW
   // pass and non-tiled controllers render the image exactly as before.
   if (!renderer.glyphIntersectsStrip(x, y, x + width - 1, y + height - 1)) {
-    return;
+    return true;
   }
 
   if (imageFailedThisSession(imagePath)) {
     renderPlaceholder(renderer, x, y, foregroundBlack);
-    return;
+    return true;
   }
 
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
-  if (renderFromCache(renderer, cachePath, x, y, width, height)) {
+  if (renderFromCache(renderer, cachePath, x, y, width, height, imageGrayscale)) {
     renderer.preserveImagePolarity(x, y, width, height);
-    return;  // Successfully rendered from cache
+    return true;  // Successfully rendered from cache
   }
 
-  // No cache - need to decode the image
-  // Check if image file exists
-  FsFile file;
-  if (!Storage.openFileForRead("IMG", imagePath, file)) {
-    LOG_ERR("IMG", "Image file not found: %s", imagePath.c_str());
-    rememberImageFailure(imagePath);
-    renderPlaceholder(renderer, x, y, foregroundBlack);
-    return;
+  // A grayscale plane must replay the exact cached quantization used by BW.
+  // Regenerating after a cache read failure can choose a different low-memory
+  // fallback. Let the reader discard the whole gray pass instead.
+  if (renderer.getRenderMode() != GfxRenderer::BW) {
+    LOG_ERR("IMG", "Grayscale cache replay failed: %s", cachePath.c_str());
+    return false;
   }
-  size_t fileSize = file.size();
-  file.close();
 
-  if (fileSize == 0) {
-    LOG_ERR("IMG", "Image file is empty: %s", imagePath.c_str());
-    rememberImageFailure(imagePath);
-    renderPlaceholder(renderer, x, y, foregroundBlack);
-    return;
+  // Retain only this image's compressed source until its decoder returns.
+  HeapByteBuffer source;
+  size_t sourceSize = 0;
+  if (!sourcePath.empty() && !Storage.exists(imagePath.c_str())) {
+    if (loadFn && ImageDecoderFactory::supportsMemorySource(imagePath))
+      source = loadFn(extractContext, sourcePath.c_str(), sourceSize);
+    if (!source && extractFn && !extractFn(extractContext, sourcePath.c_str(), imagePath.c_str())) {
+      LOG_ERR("IMG", "Image extraction failed: %s", sourcePath.c_str());
+      rememberImageFailure(imagePath);
+      renderPlaceholder(renderer, x, y, foregroundBlack);
+      return true;
+    }
+  }
+  if (!source) {
+    FsFile file;
+    const bool opened = Storage.openFileForRead("IMG", imagePath, file);
+    const size_t fileSize = opened ? file.size() : 0;
+    file.close();
+    if (fileSize == 0) {
+      LOG_ERR("IMG", "Missing or empty image: %s", imagePath.c_str());
+      rememberImageFailure(imagePath);
+      renderPlaceholder(renderer, x, y, foregroundBlack);
+      return true;
+    }
   }
 
   RenderConfig config;
+  config.sourceData = source.get();
+  config.sourceSize = sourceSize;
   config.x = x;
   config.y = y;
   config.maxWidth = width;
   config.maxHeight = height;
-  config.useGrayscale = true;
+  config.useGrayscale = imageGrayscale;
   config.useDithering = true;
   config.performanceMode = false;
   config.useExactDimensions = true;  // Use pre-calculated dimensions to avoid rounding mismatches
@@ -558,7 +589,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
     LOG_ERR("IMG", "No decoder found for image: %s", imagePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y, foregroundBlack);
-    return;
+    return true;
   }
 
   bool success = decoder->decodeToFramebuffer(imagePath, renderer, config);
@@ -566,13 +597,14 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y, foregroundBlack);
-    return;
+    return true;
   }
 
   renderer.preserveImagePolarity(x, y, width, height);
+  return true;
 }
 
-bool ImageBlock::serialize(FsFile& file) {
+bool ImageBlock::serialize(Print& file) {
   return serialization::tryWriteString(file, imagePath) && serialization::tryWriteString(file, sourcePath) &&
          serialization::tryWritePod(file, width) && serialization::tryWritePod(file, height);
 }
