@@ -9,6 +9,7 @@
 
 #include "StudyPackParse.h"
 #include "StudySrs.h"
+#include "StudyStats.h"
 
 // SD card access for the study pack:
 //   /study/manifest.json           tracks (written by the Study-App's tools/eink_pack.py)
@@ -82,5 +83,9 @@ class ProgressLog {
  private:
   bool append(const char* line, size_t len);
 };
+
+// Reads the progress log and every track's flashcard schedule into tally, and per-track counts into perTrack (one entry
+// per track, in the same order). Missing files simply count as nothing studied yet.
+void loadStudyStats(const std::vector<TrackInfo>& tracks, StudyTally& tally, std::vector<TrackStudyStats>& perTrack);
 
 }  // namespace study

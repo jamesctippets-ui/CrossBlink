@@ -6,14 +6,12 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "components/UITheme.h"
-
 namespace {
 constexpr unsigned kSaveEvery = 5;  // debounce schedule writes; the progress log itself is appended per rating
 }
 
 void StudyFlashcardsActivity::onEnter() {
-  Activity::onEnter();
+  StudyBookActivity::onEnter();
   state = State::Error;
   if (allocLineBuffer() && cards.open(std::string(study::kStudyRoot) + "/" + track.key + "/cards.jsonl", true)) {
     srs.load(track.key);
@@ -21,6 +19,7 @@ void StudyFlashcardsActivity::onEnter() {
     state = session.empty() ? State::Empty : State::Front;
     if (state == State::Front && !loadCurrent()) state = State::Error;
   }
+  buildPage();
   requestUpdate();
 }
 
@@ -93,20 +92,55 @@ void StudyFlashcardsActivity::rate(const int quality) {
   if (state == State::Summary) srs.save();
 }
 
+void StudyFlashcardsActivity::buildPage(const bool focusLast) {
+  beginPage();
+  switch (state) {
+    case State::Front:
+      addText(card.front().c_str(), study::TextStyle::Regular, false);
+      addAction(tr(STR_STUDY_SHOW_ANSWER), HitReveal);
+      break;
+    case State::Back:
+      addText(card.term.c_str(), study::TextStyle::Bold, false);
+      addText(card.def.c_str());
+      addText(card.example.c_str(), study::TextStyle::Italic);
+      // Don't got it comes first so a stray OK press does not inflate the score.
+      addAction(tr(STR_STUDY_DONT_GOT_IT), HitMissed);
+      addAction(tr(STR_STUDY_GOT_IT), HitGotIt);
+      break;
+    case State::Summary:
+      snprintf(summary, sizeof(summary), tr(STR_STUDY_CARDS_SUMMARY_FORMAT), gotIt, missed);
+      addText(tr(STR_STUDY_SESSION_DONE), study::TextStyle::Bold, false);
+      addText(summary);
+      addAction(tr(STR_STUDY_STUDY_MORE), HitMore);
+      addAction(tr(STR_STUDY_DONE), HitDone);
+      break;
+    case State::Empty:
+    case State::Error:
+      addText(state == State::Empty ? tr(STR_STUDY_NOTHING_HERE) : tr(STR_STUDY_LOAD_FAILED), study::TextStyle::Regular,
+              false);
+      addAction(tr(STR_STUDY_DONE), HitDone);
+      break;
+  }
+  endPage(focusLast);
+}
+
 bool StudyFlashcardsActivity::onTap(const int id) {
   switch (id) {
     case HitReveal:
       if (state != State::Front) return false;
       state = State::Back;
+      buildPage();
       return true;
     case HitGotIt:
     case HitMissed:
       if (state != State::Back) return false;
       rate(id == HitGotIt ? study::kQualityGotIt : study::kQualityMissed);
+      buildPage();
       return true;
     case HitMore:
       buildSession();
       state = session.empty() ? State::Empty : (loadCurrent() ? State::Front : State::Error);
+      buildPage();
       return true;
     case HitDone:
       finish();
@@ -116,74 +150,32 @@ bool StudyFlashcardsActivity::onTap(const int id) {
   }
 }
 
-void StudyFlashcardsActivity::render(RenderLock&&) {
-  clearHits();
-  char subtitle[64];
-  if (state == State::Front || state == State::Back) {
-    snprintf(subtitle, sizeof(subtitle), "%u / %u", static_cast<unsigned>(position + 1),
-             static_cast<unsigned>(session.size()));
-  } else {
-    snprintf(subtitle, sizeof(subtitle), "%s", categoryName() != nullptr ? categoryName() : track.label.c_str());
-  }
-  const auto layout = StudyUi::beginScreen(renderer, mappedInput, tr(STR_STUDY_FLASHCARDS), subtitle);
-  const Rect& c = layout.content;
-  const int body = StudyUi::bodyFont();
-  const int title = StudyUi::titleFont();
-  const int buttonHeight = renderer.getLineHeight(body) + StudyUi::kBoxPadding * 3;
-  const Rect bottomRow{c.x, c.y + c.height - buttonHeight, c.width, buttonHeight};
-  const int halfWidth = (c.width - StudyUi::kBoxGap) / 2;
-  const Rect leftButton{bottomRow.x, bottomRow.y, halfWidth, buttonHeight};
-  const Rect rightButton{bottomRow.x + halfWidth + StudyUi::kBoxGap, bottomRow.y, halfWidth, buttonHeight};
-  const int textBottom = bottomRow.y - StudyUi::kBoxGap;
-  const int lineHeight = renderer.getLineHeight(body);
+bool StudyFlashcardsActivity::onPastEnd() {
+  // Turning past the prompt shows the answer, like turning a flashcard over.
+  return onTap(HitReveal);
+}
 
-  switch (state) {
-    case State::Front: {
-      const int maxLines = (textBottom - c.y) / lineHeight;
-      StudyUi::drawParagraph(renderer, title, c.x, c.y, c.width, card.front().c_str(), maxLines);
-      // The whole card area reveals the answer, plus an explicit button.
-      addHit(Rect{c.x, c.y, c.width, textBottom - c.y}, HitReveal);
-      StudyUi::drawBox(renderer, bottomRow, body, tr(STR_STUDY_SHOW_ANSWER), 1, StudyUi::BoxStyle::Selected, true);
-      addHit(bottomRow, HitReveal);
-      break;
-    }
-    case State::Back: {
-      int y = c.y;
-      y += StudyUi::drawParagraph(renderer, title, c.x, y, c.width, card.term.c_str(), 3, EpdFontFamily::BOLD);
-      y += StudyUi::kBoxGap;
-      int remaining = (textBottom - y) / lineHeight;
-      const int used = StudyUi::drawParagraph(renderer, body, c.x, y, c.width, card.def.c_str(), remaining);
-      y += used + StudyUi::kBoxGap;
-      remaining = (textBottom - y) / lineHeight;
-      if (!card.example.empty() && remaining > 0) {
-        StudyUi::drawParagraph(renderer, body, c.x, y, c.width, card.example.c_str(), remaining, EpdFontFamily::ITALIC);
-      }
-      StudyUi::drawBox(renderer, leftButton, body, tr(STR_STUDY_DONT_GOT_IT), 1, StudyUi::BoxStyle::Normal, true);
-      StudyUi::drawBox(renderer, rightButton, body, tr(STR_STUDY_GOT_IT), 1, StudyUi::BoxStyle::Selected, true);
-      addHit(leftButton, HitMissed);
-      addHit(rightButton, HitGotIt);
-      break;
-    }
-    case State::Summary: {
-      char line[96];
-      snprintf(line, sizeof(line), tr(STR_STUDY_CARDS_SUMMARY_FORMAT), gotIt, missed);
-      UITheme::drawCenteredWrappedText(renderer, c, title, c.y + c.height / 4, tr(STR_STUDY_SESSION_DONE), 2, true,
-                                       EpdFontFamily::BOLD);
-      UITheme::drawCenteredWrappedText(renderer, c, body, c.y + c.height / 4 + lineHeight * 3, line, 3);
-      StudyUi::drawBox(renderer, leftButton, body, tr(STR_STUDY_DONE), 1, StudyUi::BoxStyle::Normal, true);
-      StudyUi::drawBox(renderer, rightButton, body, tr(STR_STUDY_STUDY_MORE), 1, StudyUi::BoxStyle::Selected, true);
-      addHit(leftButton, HitDone);
-      addHit(rightButton, HitMore);
-      break;
-    }
-    case State::Empty:
-    case State::Error:
-      UITheme::drawCenteredWrappedText(renderer, c, body, c.y + c.height / 3,
-                                       state == State::Empty ? tr(STR_STUDY_NOTHING_HERE) : tr(STR_STUDY_LOAD_FAILED),
-                                       4);
-      StudyUi::drawBox(renderer, bottomRow, body, tr(STR_STUDY_DONE), 1, StudyUi::BoxStyle::Normal, true);
-      addHit(bottomRow, HitDone);
-      break;
+bool StudyFlashcardsActivity::onBeforeStart() {
+  // Paging back from the answer shows the prompt again, with the focus on Show answer.
+  if (state != State::Back) return false;
+  state = State::Front;
+  buildPage(true);
+  return true;
+}
+
+void StudyFlashcardsActivity::statusTitle(char* out, const size_t size) const {
+  if (state == State::Front || state == State::Back) {
+    snprintf(out, size, "%s %u / %u", tr(STR_STUDY_FLASHCARDS), static_cast<unsigned>(position + 1),
+             static_cast<unsigned>(session.size()));
+  } else if (categoryName() != nullptr) {
+    snprintf(out, size, "%s, %s", tr(STR_STUDY_FLASHCARDS), categoryName());
+  } else {
+    snprintf(out, size, "%s", tr(STR_STUDY_FLASHCARDS));
   }
-  renderer.displayBuffer();
+}
+
+float StudyFlashcardsActivity::statusProgress() const {
+  if (state == State::Summary) return 100.0f;
+  if (session.empty()) return 0.0f;
+  return static_cast<float>(position) * 100.0f / static_cast<float>(session.size());
 }

@@ -6,6 +6,7 @@
 
 #include "StudyPackParse.h"
 #include "StudySrs.h"
+#include "StudyStats.h"
 
 using namespace study;
 
@@ -151,4 +152,107 @@ TEST(StudyPackParse, LogLinesMatchTheContract) {
   EXPECT_EQ(formatCardEvent(buf, sizeof(buf), "ccna", "f12", 9, kNow), 0u);
   EXPECT_EQ(formatCardEvent(buf, 10, "ccna", "f12", 4, kNow), 0u);
   EXPECT_EQ(formatQuestionEvent(buf, sizeof(buf), "Bad Key", "q3", true, 0), 0u);
+}
+
+TEST(StudyStats, ParsesTheReadersOwnLogLines) {
+  char buf[128];
+  LogEvent e;
+  const size_t cardLen = formatCardEvent(buf, sizeof(buf), "ccna", "f12", 4, kNow);
+  ASSERT_TRUE(parseLogEvent(buf, cardLen - 1, e));  // without the newline, as the line reader passes it
+  EXPECT_EQ(e.kind, LogEvent::Kind::Card);
+  EXPECT_STREQ(e.track, "ccna");
+  EXPECT_TRUE(e.ok);
+  EXPECT_EQ(e.t, kNow);
+
+  const size_t missLen = formatCardEvent(buf, sizeof(buf), "ccna", "f12", kQualityMissed, 0);
+  ASSERT_TRUE(parseLogEvent(buf, missLen, e));
+  EXPECT_FALSE(e.ok);
+  EXPECT_EQ(e.t, 0u);
+
+  const size_t qLen = formatQuestionEvent(buf, sizeof(buf), "sec-plus", "q3", true, kNow);
+  ASSERT_TRUE(parseLogEvent(buf, qLen, e));
+  EXPECT_EQ(e.kind, LogEvent::Kind::Question);
+  EXPECT_STREQ(e.track, "sec-plus");
+  EXPECT_TRUE(e.ok);
+}
+
+TEST(StudyStats, SkipsHeaderAndUnknownLines) {
+  char buf[128];
+  LogEvent e;
+  const size_t headerLen = formatLogHeader(buf, sizeof(buf), "st0001abcd");
+  EXPECT_FALSE(parseLogEvent(buf, headerLen, e));
+  const char* game = "{\"k\":\"g\",\"tr\":\"ccna\",\"game\":\"seq\",\"id\":\"s1\",\"ok\":1}";
+  EXPECT_FALSE(parseLogEvent(game, len(game), e));
+  const char* noTrack = "{\"k\":\"q\",\"id\":\"q1\",\"ok\":1}";
+  EXPECT_FALSE(parseLogEvent(noTrack, len(noTrack), e));
+  const char* badQuality = "{\"k\":\"c\",\"tr\":\"ccna\",\"id\":\"f1\",\"q\":9}";
+  EXPECT_FALSE(parseLogEvent(badQuality, len(badQuality), e));
+  const char* cut = "{\"k\":\"q\",\"tr\":\"cc";
+  EXPECT_FALSE(parseLogEvent(cut, len(cut), e));
+}
+
+namespace {
+LogEvent event(const LogEvent::Kind kind, const bool ok, const uint32_t t) {
+  LogEvent e;
+  e.kind = kind;
+  e.ok = ok;
+  e.t = t;
+  strcpy(e.track, "ccna");
+  return e;
+}
+}  // namespace
+
+TEST(StudyStats, CountsTodayAndStreakInLocalTime) {
+  // kNow is 2025-11-11 01:36 UTC. At UTC-5 that is still Nov 10 locally.
+  const int32_t offset = -5 * 3600;
+  StudyTally tally(kNow, offset);
+  tally.add(event(LogEvent::Kind::Card, true, kNow - 60));                   // local today
+  tally.add(event(LogEvent::Kind::Question, false, kNow - 3 * 3600));        // Nov 10 17:36 local, today
+  tally.add(event(LogEvent::Kind::Question, true, kNow - kSecondsPerDay));   // yesterday
+  tally.add(event(LogEvent::Kind::Card, false, kNow - 2 * kSecondsPerDay));  // two days ago
+  tally.add(event(LogEvent::Kind::Card, true, kNow - 5 * kSecondsPerDay));   // gap before this one
+  tally.add(event(LogEvent::Kind::Question, true, 0));                       // no clock: all-time only
+  const StudyTotals t = tally.totals();
+  EXPECT_EQ(t.cardReviews, 3u);
+  EXPECT_EQ(t.cardsGotIt, 2u);
+  EXPECT_EQ(t.questions, 3u);
+  EXPECT_EQ(t.questionsCorrect, 2u);
+  EXPECT_EQ(t.todayCards, 1u);
+  EXPECT_EQ(t.todayQuestions, 1u);
+  EXPECT_EQ(t.streakDays, 3u);
+}
+
+TEST(StudyStats, StreakSurvivesUntilTheEndOfTheNextDay) {
+  StudyTally tally(kNow, 0);
+  tally.add(event(LogEvent::Kind::Card, true, kNow - kSecondsPerDay));
+  tally.add(event(LogEvent::Kind::Card, true, kNow - 2 * kSecondsPerDay));
+  EXPECT_EQ(tally.totals().streakDays, 2u);
+  EXPECT_EQ(tally.totals().todayCards, 0u);
+
+  StudyTally lapsed(kNow, 0);
+  lapsed.add(event(LogEvent::Kind::Card, true, kNow - 2 * kSecondsPerDay));
+  EXPECT_EQ(lapsed.totals().streakDays, 0u);
+}
+
+TEST(StudyStats, NoClockKeepsAllTimeCountsOnly) {
+  StudyTally tally(0, 0);
+  EXPECT_FALSE(tally.clockSet());
+  tally.add(event(LogEvent::Kind::Card, true, kNow));
+  const StudyTotals t = tally.totals();
+  EXPECT_EQ(t.cardReviews, 1u);
+  EXPECT_EQ(t.todayCards, 0u);
+  EXPECT_EQ(t.streakDays, 0u);
+}
+
+TEST(StudyStats, ScheduleCountsSeenAndDueCards) {
+  StudyTally tally(kNow, 0);
+  TrackStudyStats track;
+  tally.addSchedule(SrsEntry{}, track);                                                     // never rated
+  tally.addSchedule(nextSrs(SrsEntry{}, kQualityMissed, kNow), track);                      // due now
+  tally.addSchedule(nextSrs(SrsEntry{}, kQualityGotIt, kNow), track);                       // due tomorrow
+  tally.addSchedule(nextSrs(SrsEntry{}, kQualityGotIt, kNow - 2 * kSecondsPerDay), track);  // overdue
+  EXPECT_EQ(track.cardsSeen, 3u);
+  EXPECT_EQ(track.cardsDue, 2u);
+  EXPECT_EQ(percentOf(2, 3), 66u);
+  EXPECT_EQ(percentOf(1, 0), 0u);
 }
