@@ -43,3 +43,17 @@ the latest published pack: leave the reader on Home, tick the tracks and press *
 | `/study/.srs/<track>.bin` | The reader's flashcard schedule. Delete it to start the track's schedule fresh. |
 
 Times in the log come from the reader's clock. With no clock set they are left out and the app uses the import time.
+
+## Study page on the Dashboard
+
+With the **Dashboard** Home screen, swipe left on Home to open the Study page. Swipe right (or tap the back arrow) to
+return to Home. It shows, from the reader's own log and flashcard schedules:
+
+- **Cards due**: flashcards whose next review is now or overdue, across all tracks.
+- **Day streak**: days in a row with at least one flashcard or question, counting today or yesterday.
+- **Quiz score**: the share of quiz and practice-test questions answered right, all time.
+- Today's and all-time counts of flashcards rated and questions answered.
+- Each track, most studied first, with the cards seen so far, the cards due and its quiz score. Tap a track to study it.
+
+**Open Study** goes to the full track list. Cards due, the streak and today's counts need the reader's clock to be set
+(it is set over Wi-Fi); without it they show a dash. Days follow the time zone in the clock settings.

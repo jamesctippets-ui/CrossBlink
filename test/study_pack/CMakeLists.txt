@@ -9,6 +9,7 @@ add_executable(StudyPackTest
   StudyPackTest.cpp
   ${REPO_ROOT}/lib/StudyPack/StudyPackParse.cpp
   ${REPO_ROOT}/lib/StudyPack/StudySrs.cpp
+  ${REPO_ROOT}/lib/StudyPack/StudyStats.cpp
 )
 target_include_directories(StudyPackTest PRIVATE ${REPO_ROOT}/lib/StudyPack ${arduinojson_SOURCE_DIR}/src)
 target_link_libraries(StudyPackTest PRIVATE crosspoint_test_common GTest::gtest_main)

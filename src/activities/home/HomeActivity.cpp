@@ -26,6 +26,7 @@
 #include "../reader/BookStatsTracking.h"
 #include "../reader/EpubReaderUtils.h"
 #include "../study/StudyHomeActivity.h"
+#include "../study/StudyStatsActivity.h"
 #include "AppCapabilities.h"
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
@@ -1548,6 +1549,13 @@ void HomeActivity::loop() {
         requestUpdate();
         return;
       case MappedInputManager::SwipeDir::Left:
+#if CROSSINK_APP_STUDY_MODE
+        // Dashboard: the page to the right of Home is Study with its stats, in place of the next recent book.
+        if (mappedInput.hasTouch() && isDashboardTheme()) {
+          onStudyStatsOpen();
+          return;
+        }
+#endif
         if (mappedInput.hasTouch() && canSwapHomeBook()) {
           showNextRecentBookOnHome();
           return;
@@ -2382,6 +2390,15 @@ void HomeActivity::onStudyOpen() {
   auto study = makeUniqueNoThrow<StudyHomeActivity>(renderer, mappedInput);
   if (!study) {
     LOG_ERR("HOME", "Cannot allocate the Study activity");
+    return;
+  }
+  startActivityForResult(std::move(study), [this](const ActivityResult&) { requestUpdate(); });
+}
+
+void HomeActivity::onStudyStatsOpen() {
+  auto study = makeUniqueNoThrow<StudyStatsActivity>(renderer, mappedInput);
+  if (!study) {
+    LOG_ERR("HOME", "Cannot allocate the Study stats activity");
     return;
   }
   startActivityForResult(std::move(study), [this](const ActivityResult&) { requestUpdate(); });
