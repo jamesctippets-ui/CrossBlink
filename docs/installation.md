@@ -89,13 +89,18 @@ it. Pick the latest build from `main`, an open pull request's build, or a
 Files that are not ESP32-S3 app images, or are too large for the app slot, are
 refused.
 
-**Load study pack (Wi-Fi).** On the Sticky open File Transfer, on the same Wi-Fi
-as the Mac. Choose the study pack folder (the `study` folder written by
-Study-App's `tools/eink_pack.py`, usually `Study-App/eink-out/study`), check the
-reader address shown on the Sticky (`crosspoint.local` by default), and click
-**Send study pack**. Files go to `/study/` on the SD card. Files in the pack
-replace their old copies; `progress.jsonl`, dot-folders such as `.srs`, and
-anything not in the pack are left alone. `manifest.json` is sent last.
+**Send Cert Study Hub (Wi-Fi).** On the Sticky open File Transfer, on the same
+Wi-Fi as the Mac. The page finds the Sticky by itself (the reader's UDP
+discovery, then `crosspoint.local`) and downloads the latest Cert Study Hub pack
+from Study-App's `eink-study-pack` release, so no Study-App checkout is needed.
+Tick the cert tracks you want and click **Send**. The choice is remembered for
+next time. You can also pick **A pack folder on this Mac** to send a pack you
+built with Study-App's `tools/eink_pack.py`.
+
+Files go to `/study/` on the SD card, and `manifest.json` (sent last) lists only
+the tracks you ticked. Files in the pack replace their old copies;
+`progress.jsonl`, dot-folders such as `.srs`, and everything else on the card
+are left alone.
 
 ### Terminal only
 

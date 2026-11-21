@@ -3,7 +3,7 @@
 ### Added
 
 - Sticky Hub, a local web page on the Mac (started by `scripts/flash-sticky.sh`), flashes the Sticky over USB with the latest build from main, a pull request, or a downloaded file, replacing only the app firmware so the SD card and settings are kept.
-- Sticky Hub also copies a Study-App study pack to `/study/` over the reader's Wi-Fi File Transfer, keeping the reader's study progress.
+- Sticky Hub sends Cert Study Hub to the Sticky over Wi-Fi in one click: it finds the reader, downloads the latest study pack, and copies the tracks you tick to `/study/`, keeping the reader's study progress.
 - Study mode on touch devices: Home > Study runs Cert Study Hub flashcards, quizzes, timed practice tests and a matching game offline from a study pack on the SD card, and logs results so the app can import them.
 - Sticky: when the downloaded dictionary has no entry for a word, the reader quietly joins a saved Wi-Fi network, looks the word up in the free online Free Dictionary API (English), shows the definition, and turns Wi-Fi back off. Words already fetched are reused from the SD card without Wi-Fi. Turn it off with Settings > Reader > Online Dictionary Fallback.
 - Show a Delete button when opening a clipping on button-only readers (#936).
