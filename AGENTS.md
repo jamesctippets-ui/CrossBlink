@@ -8,8 +8,12 @@ Project: Open-source e-reader firmware for ESP32-C3 and ESP32-S3 devices.
 Lineage: this repo (Crossblink) is a personal fork of
 [CrossInk](https://github.com/uxjulia/CrossInk), which is itself a downstream
 fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader).
-The primary target for this fork is the Seeed reTerminal Sticky (`sticky` env).
-Upstream links in `README.md` and `docs/` still point at CrossInk, and code
+This fork is designed specifically for the Seeed reTerminal Sticky (ESP32-S3,
+touch, PSRAM). Build and verify with `sticky` and `sticky-simulator`; the other
+device envs are inherited from upstream and are not targets here. Sticky-only
+features may rely on S3/PSRAM, but keep them behind the existing capability
+macros (`FREEINK_DEVICE_STICKY`, `CROSSINK_APP_CAP_*`) so upstream merges stay
+clean. Upstream links in `README.md` and `docs/` still point at CrossInk, and code
 identifiers keep the `CrossPoint`/`CROSSPOINT_` and `CROSSINK_` prefixes; do not
 rename them.
 
@@ -170,7 +174,7 @@ SDK.
 - Common validation commands:
   - `pio run -e simulator` for simulator-facing UI/reader work.
   - `pio run -e default` for the ESP32-C3 X3/X4 firmware.
-  - `pio run -e sticky` for the ESP32-S3 Sticky firmware.
+  - `pio run -e sticky` for the ESP32-S3 Sticky firmware (this fork's target).
   - `pio run -e x4-pro` for the ESP32-S3 X4 Pro firmware.
   - `pio run -e sticky --target upload` then `pio device monitor` to flash and watch serial logs.
   - `pio check -e default --fail-on-defect low --fail-on-defect medium --fail-on-defect high` for static analysis (CI runs it without `-e`).
