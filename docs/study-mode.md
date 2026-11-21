@@ -5,7 +5,11 @@ tests and a matching game. It is built into touch builds (the Sticky) and is ope
 
 ## Put a study pack on the SD card
 
-In the Study-App repository:
+The easy way is Sticky Hub on a Mac (see [Installation](installation.md)): open File Transfer on the reader, tick the
+cert tracks, and press Send. It downloads the latest pack that Study-App publishes on its `eink-study-pack` release,
+so no Study-App checkout is needed.
+
+To build a pack yourself, in the Study-App repository:
 
 ```sh
 python3 build.py

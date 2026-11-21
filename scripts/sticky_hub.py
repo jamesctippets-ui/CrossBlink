@@ -5,8 +5,11 @@ Started by `scripts/flash-sticky.sh` with no arguments. It serves one page on 12
 two jobs, one at a time, streaming progress to the page:
 
   Flash firmware   Runs flash-sticky.sh non-interactively over USB (app slot + otadata only).
-  Study pack       Copies a Study-App pack folder to /study/ on the SD card through the reader's
-                   Wi-Fi File Transfer web server (/api/files, /mkdir, /delete, /upload).
+  Study pack       Downloads the latest Cert Study Hub pack (Study-App's eink-study-pack release),
+                   or uses a pack folder on the Mac, and copies the chosen tracks to /study/ on the
+                   SD card through the reader's Wi-Fi File Transfer web server
+                   (/api/files, /mkdir, /delete, /upload). The reader is found with the
+                   firmware's UDP discovery ("hello" on port 8134) or crosspoint.local.
 
 Only the Python standard library is used, so it runs from the flasher's private venv.
 """
@@ -20,6 +23,8 @@ import json
 import os
 import secrets
 import shutil
+import socket
+import tempfile
 import subprocess
 import sys
 import threading
@@ -29,6 +34,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -36,8 +42,13 @@ DEFAULT_REPO = "jamesctippets-ui/crossblink"
 STUDY_DEST = "/study"
 # Device-owned files that must never be replaced from the computer: the reader's progress log
 # (imported back into the app) and any dot-prefixed state such as /study/.srs/.
-STUDY_SKIP_NAMES = {"progress.jsonl"}
+STUDY_SKIP_NAMES = {"progress.jsonl", "progress.sample.jsonl"}
 HTTP_TIMEOUT = 30
+STUDY_PACK_URL = os.environ.get(
+    "CROSSBLINK_STUDY_PACK_URL",
+    "https://github.com/jamesctippets-ui/Study-App/releases/download/eink-study-pack/study-pack.zip")
+TOOL_HOME = Path(os.environ.get("CROSSBLINK_FLASHER_HOME") or Path.home() / ".crossblink-flasher")
+DISCOVERY_PORT = 8134  # CrossPointWebServer answers "hello" here with "crosspoint (on <host>);<wsPort>"
 
 
 # --- Job runner --------------------------------------------------------------------------------
@@ -137,12 +148,25 @@ class Hub:
 
     # --- study pack ---
 
-    def upload_study(self, job: Job, host: str, folder: str) -> None:
+    def upload_study(self, job: Job, host: str, folder: str, tracks: list[str] | None) -> None:
         base = device_base(host)
         root = resolve_pack_folder(folder)
-        files = pack_files(root)
-        if not files:
-            return job.finish(False, f"No files to send in {root}.")
+        manifest = read_manifest(root)
+        known = [t["key"] for t in manifest.get("tracks", [])]
+        if tracks is not None:
+            tracks = [k for k in tracks if k in known]
+            if not tracks:
+                return job.finish(False, "Tick at least one track to send.")
+            manifest = dict(manifest, tracks=[t for t in manifest["tracks"] if t["key"] in tracks])
+        files = pack_files(root, set(tracks) if tracks is not None else None)
+        # The manifest goes last, so the reader never sees one that lists files not copied yet.
+        # It lists only the tracks being sent, so the reader shows exactly what was picked.
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        with tmp:
+            json.dump(manifest, tmp, ensure_ascii=False, indent=1)
+        files.append((Path("manifest.json"), Path(tmp.name)))
+        labels = ", ".join(t.get("label", t["key"]) for t in manifest.get("tracks", []))
+        job.log(f"Tracks: {labels}")
         total = sum(p.stat().st_size for _, p in files)
         job.log(f"Pack: {root} ({len(files)} files, {total / 1024:.0f} KB)")
         job.log(f"Reader: {base}")
@@ -181,11 +205,12 @@ class Hub:
             if name in listing(dest_dir):
                 # The reader refuses to overwrite, so remove the old copy of this one file first.
                 http_post_form(base + "/delete", {"path": f"{dest_dir}/{name}"})
-            http_upload(base + "/upload?" + urllib.parse.urlencode({"path": dest_dir}), local)
+            http_upload(base + "/upload?" + urllib.parse.urlencode({"path": dest_dir}), local, name)
             listing(dest_dir)[name] = False
             sent += local.stat().st_size
             job.log(f"[{i}/{len(files)}] {dest_dir}/{name} ({local.stat().st_size / 1024:.0f} KB)")
         secs = max(time.time() - started, 0.1)
+        os.unlink(tmp.name)
         job.finish(True, f"Study pack copied: {len(files)} files, {sent / 1024:.0f} KB in {secs:.0f} s. "
                          "Your progress file on the reader was left as it was.")
 
@@ -207,18 +232,119 @@ def resolve_pack_folder(folder: str) -> Path:
                        "that Study-App's tools/eink_pack.py wrote.")
 
 
-def pack_files(root: Path) -> list[tuple[Path, Path]]:
+def read_manifest(root: Path) -> dict:
+    try:
+        return json.loads((root / "manifest.json").read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Could not read {root / 'manifest.json'}: {exc}") from None
+
+
+def pack_files(root: Path, tracks: set[str] | None = None) -> list[tuple[Path, Path]]:
+    """Files to send, without manifest.json (the caller sends it last). With `tracks`, only those
+    track folders, plus loose top-level files such as state.json."""
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        here = Path(dirpath)
+        keep = [d for d in dirnames if not d.startswith(".")]
+        if here == root and tracks is not None:
+            keep = [d for d in keep if d in tracks]
+        dirnames[:] = sorted(keep)
         for name in sorted(filenames):
             if name.startswith(".") or name in STUDY_SKIP_NAMES:
                 continue
-            local = Path(dirpath) / name
-            out.append((local.relative_to(root), local))
-    # manifest.json last, so the reader never sees a manifest that points at files not yet copied.
-    out.sort(key=lambda item: (item[0].as_posix() == "manifest.json", item[0].as_posix()))
+            if here == root and name == "manifest.json":
+                continue
+            out.append(((here / name).relative_to(root), here / name))
     return out
+
+
+def pack_info(root: Path) -> dict:
+    manifest = read_manifest(root)
+    tracks = []
+    for t in manifest.get("tracks", []):
+        size = sum(f.stat().st_size for f in (root / t["key"]).glob("*") if f.is_file())
+        tracks.append({"key": t["key"], "label": t.get("label", t["key"]), "subtitle": t.get("subtitle", ""),
+                       "cards": t.get("cards", 0), "questions": t.get("questions", 0), "bytes": size})
+    return {"folder": str(root), "built": manifest.get("built", ""), "tracks": tracks}
+
+
+def download_latest_pack() -> Path:
+    """Downloads Study-App's published pack into ~/.crossblink-flasher/study-pack/latest/study."""
+    dest = TOOL_HOME / "study-pack"
+    dest.mkdir(parents=True, exist_ok=True)
+    zpath = dest / "study-pack.zip"
+    try:
+        with urllib.request.urlopen(STUDY_PACK_URL, timeout=120) as resp, open(zpath, "wb") as out:
+            shutil.copyfileobj(resp, out)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise RuntimeError("The Cert Study Hub pack has not been published yet. It appears after Study-App's "
+                               "'E-ink study pack' workflow runs. Until then, use a folder on this Mac.") from None
+        raise RuntimeError(f"Downloading the study pack failed ({exc.code}).") from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise RuntimeError(f"Downloading the study pack failed ({getattr(exc, 'reason', exc)}).") from None
+    latest = dest / "latest"
+    shutil.rmtree(latest, ignore_errors=True)
+    latest.mkdir()
+    with zipfile.ZipFile(zpath) as zf:
+        for member in zf.namelist():
+            target = (latest / member).resolve()
+            if latest.resolve() not in target.parents and target != latest.resolve():
+                raise RuntimeError(f"Refusing to unpack {member}: it points outside the pack folder.")
+        zf.extractall(latest)
+    return resolve_pack_folder(str(latest))
+
+
+# --- Finding the reader ----------------------------------------------------------------------
+
+
+def discover_readers(wait: float = 1.5) -> list[dict]:
+    """Asks every CrossPoint/CrossBlink reader in File Transfer mode on this network to answer."""
+    found: dict[str, dict] = {}
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.25)
+        targets = {"255.255.255.255"}
+        try:  # also the /24 broadcast of the Mac's own address, for routers that drop 255.255.255.255
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(("192.0.2.1", 9))  # no packet is sent; this only picks the outgoing interface
+            own = probe.getsockname()[0]
+            probe.close()
+            targets.add(own.rsplit(".", 1)[0] + ".255")
+        except OSError:
+            pass
+        deadline = time.time() + wait
+        sent_at = 0.0
+        while time.time() < deadline:
+            if time.time() - sent_at > 0.5:
+                for t in targets:
+                    try:
+                        sock.sendto(b"hello", (t, DISCOVERY_PORT))
+                    except OSError:
+                        pass
+                sent_at = time.time()
+            try:
+                data, (ip, _) = sock.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            text = data.decode("utf-8", "replace")
+            if text.startswith("crosspoint"):
+                name = text.split("(on ", 1)[-1].split(")", 1)[0] if "(on " in text else "reader"
+                found[ip] = {"host": ip, "name": name}
+    finally:
+        sock.close()
+    if not found:
+        # mDNS fallback; resolve in a thread because a missing .local name can block for seconds.
+        result: list[str] = []
+        t = threading.Thread(target=lambda: result.append(socket.gethostbyname("crosspoint.local")), daemon=True)
+        t.start()
+        t.join(2.0)
+        if result:
+            found[result[0]] = {"host": "crosspoint.local", "name": "crosspoint.local"}
+    return list(found.values())
 
 
 def guess_pack_folder() -> str:
@@ -271,9 +397,9 @@ def http_post_form(url: str, fields: dict) -> str:
         return resp.read().decode("utf-8", "replace")
 
 
-def http_upload(url: str, path: Path) -> str:
+def http_upload(url: str, path: Path, name: str | None = None) -> str:
     boundary = "----stickyhub" + uuid.uuid4().hex
-    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\n"
+    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name or path.name}\"\r\n"
             "Content-Type: application/octet-stream\r\n\r\n").encode()
     tail = f"\r\n--{boundary}--\r\n".encode()
     body = head + path.read_bytes() + tail
@@ -387,17 +513,20 @@ def make_handler(hub: Hub, token: str, port: int):
                                                              str(data.get("port", ""))))
                     return self._json(200, {"ok": True})
                 if path == "/api/study":
+                    tracks = data.get("tracks")
+                    tracks = [str(k) for k in tracks] if isinstance(tracks, list) else None
                     hub.start("study", lambda job: hub.upload_study(job, str(data.get("host", "")),
-                                                                    str(data.get("folder", ""))))
+                                                                    str(data.get("folder", "")), tracks))
                     return self._json(200, {"ok": True})
+                if path == "/api/pack/latest":
+                    return self._json(200, pack_info(download_latest_pack()))
+                if path == "/api/pack/info":
+                    return self._json(200, pack_info(resolve_pack_folder(str(data.get("folder", "")))))
+                if path == "/api/discover":
+                    return self._json(200, {"readers": discover_readers()})
                 if path == "/api/check-reader":
                     status = http_get_json(device_base(str(data.get("host", ""))) + "/api/status")
                     return self._json(200, {"ok": True, "status": status})
-                if path == "/api/check-pack":
-                    root = resolve_pack_folder(str(data.get("folder", "")))
-                    files = pack_files(root)
-                    size = sum(p.stat().st_size for _, p in files)
-                    return self._json(200, {"ok": True, "folder": str(root), "files": len(files), "bytes": size})
                 if path == "/api/choose":
                     return self._json(200, {"path": choose_with_finder(str(data.get("kind", "file")))})
             except RuntimeError as exc:
@@ -446,6 +575,7 @@ PAGE = r"""<!doctype html>
           --ok:#81c784; --bad:#ef9a9a; --log:#0b0b0c; }
 }
 * { box-sizing:border-box; }
+[hidden] { display:none !important; }
 body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 main { max-width:760px; margin:0 auto; padding:28px 16px 48px; }
 h1 { font-size:24px; margin:0 0 4px; }
@@ -467,6 +597,13 @@ button:disabled { opacity:.5; cursor:default; }
 pre { background:var(--log); color:var(--logink); border-radius:10px; padding:12px; height:260px; overflow:auto;
   font:12px/1.4 ui-monospace, Menlo, monospace; white-space:pre-wrap; margin:0; }
 .logtitle { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+.trackhead { display:flex; justify-content:space-between; margin:14px 0 6px; font-weight:600; }
+button.link { border:0; background:none; padding:0; color:var(--accent); font:inherit; font-weight:400; }
+.tracks { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:6px; }
+.track { display:flex; gap:8px; align-items:flex-start; padding:8px 10px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+.track input { margin-top:3px; }
+.track b { display:block; font-size:14px; }
+.track small { color:var(--muted); font-size:12px; display:block; }
 </style>
 </head>
 <body>
@@ -488,16 +625,21 @@ pre { background:var(--log); color:var(--logink); border-radius:10px; padding:12
   </section>
 
   <section>
-    <h2>2. Load study pack (Wi-Fi)</h2>
-    <p class="hint">On the Sticky open File Transfer and join the same Wi-Fi as this Mac. Files go to /study/ on the SD card.
-      Matching files are replaced, everything else (books, settings, your study progress) is left alone.</p>
-    <label class="row">Study pack folder</label>
-    <div class="field" style="margin-left:0"><input type="text" id="folder" placeholder="~/Study-App/eink-out/study"><button id="pickFolder">Choose...</button></div>
-    <div class="status" id="packStatus" style="margin-top:6px"></div>
-    <label class="row" style="margin-top:12px">Reader address</label>
-    <div class="field" style="margin-left:0"><input type="text" id="host" value="crosspoint.local"><button id="check">Test connection</button></div>
+    <h2>2. Send Cert Study Hub (Wi-Fi)</h2>
+    <p class="hint">On the Sticky open File Transfer, on the same Wi-Fi as this Mac. The tracks you tick go to /study/ on
+      the SD card. Your study progress, books and settings are left alone.</p>
+    <label class="row" style="margin-bottom:0">Sticky</label>
+    <div class="field" style="margin-left:0"><input type="text" id="host" placeholder="Looking for your Sticky..."><button id="find">Find again</button></div>
     <div class="status" id="hostStatus" style="margin-top:6px"></div>
-    <div class="actions"><button class="primary" id="study">Send study pack</button><span class="status" id="studyStatus"></span></div>
+    <label class="row" style="margin-top:14px"><input type="radio" name="pack" value="latest" checked> Latest Cert Study Hub pack (downloaded for you)</label>
+    <label class="row"><input type="radio" name="pack" value="folder"> A pack folder on this Mac</label>
+    <div class="field" id="folderRow" hidden><input type="text" id="folder" placeholder="~/Study-App/eink-out/study"><button id="pickFolder">Choose...</button></div>
+    <div class="status" id="packStatus" style="margin-top:8px"></div>
+    <div id="trackBox" hidden>
+      <div class="trackhead"><span>Tracks</span><span><button class="link" id="all">All</button> · <button class="link" id="none">None</button></span></div>
+      <div class="tracks" id="tracks"></div>
+    </div>
+    <div class="actions"><button class="primary" id="study" disabled>Send to Sticky</button><span class="status" id="studyStatus"></span></div>
   </section>
 
   <section>
@@ -530,7 +672,6 @@ async function loadState() {
   if (s.ports.includes(prev)) port.value = prev;
   if (!$("folder").value) $("folder").value = store.get("folder") || s.studyFolder || "";
   if (!s.gh) setStatus("flashStatus", "GitHub CLI not signed in: run 'gh auth login' in Terminal to download builds, or flash a file.", "bad");
-  if ($("folder").value) checkPack();
 }
 async function loadPrs() {
   const sel = $("pr");
@@ -541,18 +682,70 @@ async function loadPrs() {
     prs.forEach(p => sel.add(new Option("#" + p.number + "  " + p.title, p.number)));
   } catch { sel.innerHTML = '<option value="">Could not load pull requests</option>'; }
 }
-async function checkPack() {
-  const folder = $("folder").value.trim();
-  if (!folder) return setStatus("packStatus", "");
+let pack = null;
+const packSource = () => document.querySelector('input[name=pack]:checked').value;
+function savedPicks() { try { return JSON.parse(store.get("tracks") || "null"); } catch { return null; } }
+function picked() { return [...document.querySelectorAll("#tracks input:checked")].map(i => i.value); }
+function updateSend() {
+  const keys = picked(), byKey = Object.fromEntries((pack ? pack.tracks : []).map(t => [t.key, t]));
+  const mb = keys.reduce((n, k) => n + (byKey[k] ? byKey[k].bytes : 0), 0) / 1048576;
+  $("study").disabled = !pack || !keys.length || !!polling;
+  $("study").textContent = keys.length ? "Send " + keys.length + " track" + (keys.length > 1 ? "s" : "") + " (" + mb.toFixed(1) + " MB)" : "Send to Sticky";
+  if (pack) store.set("tracks", JSON.stringify(keys));
+}
+function showPack(p) {
+  pack = p;
+  const saved = savedPicks(), box = $("tracks");
+  box.innerHTML = "";
+  p.tracks.forEach(t => {
+    const row = document.createElement("label"); row.className = "track";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = t.key;
+    cb.checked = saved ? saved.includes(t.key) : true; cb.onchange = updateSend;
+    const txt = document.createElement("span");
+    const b = document.createElement("b"); b.textContent = t.label;
+    const sm = document.createElement("small"); sm.textContent = t.subtitle;
+    const n = document.createElement("small"); n.textContent = t.cards + " cards · " + t.questions + " questions";
+    txt.append(b, sm, n); row.append(cb, txt); box.append(row);
+  });
+  $("trackBox").hidden = !p.tracks.length;
+  setStatus("packStatus", p.tracks.length + " tracks" + (p.built ? ", built " + p.built : ""), "ok");
+  updateSend();
+}
+async function loadPack() {
+  pack = null; $("trackBox").hidden = true; updateSend();
+  const latest = packSource() === "latest";
+  $("folderRow").hidden = latest;
   try {
-    const r = await api("/api/check-pack", { folder });
-    setStatus("packStatus", r.files + " files, " + Math.round(r.bytes / 1024) + " KB in " + r.folder, "ok");
-    store.set("folder", folder);
+    if (latest) { setStatus("packStatus", "Downloading the latest pack..."); showPack(await api("/api/pack/latest", {})); }
+    else {
+      const folder = $("folder").value.trim();
+      if (!folder) return setStatus("packStatus", "Choose the pack folder (Study-App/eink-out/study).");
+      showPack(await api("/api/pack/info", { folder })); store.set("folder", folder);
+    }
   } catch (e) { setStatus("packStatus", e.message, "bad"); }
+}
+async function checkHost(host) {
+  const r = await api("/api/check-reader", { host });
+  setStatus("hostStatus", "Connected" + (r.status.version ? " (firmware " + r.status.version + ")" : ""), "ok");
+  store.set("host", host);
+}
+async function findReader() {
+  setStatus("hostStatus", "Looking for your Sticky on this Wi-Fi...");
+  const remembered = store.get("host");
+  if (remembered) { try { $("host").value = remembered; return await checkHost(remembered); } catch {} }
+  try {
+    const { readers } = await api("/api/discover", {});
+    if (!readers.length) {
+      $("host").value = "";
+      return setStatus("hostStatus", "No Sticky found. Open File Transfer on it, make sure it is on this Wi-Fi, then Find again. You can also type the address it shows.", "bad");
+    }
+    $("host").value = readers[0].host;
+    await checkHost(readers[0].host);
+  } catch (e) { setStatus("hostStatus", e.message, "bad"); }
 }
 
 let polling = null, offset = 0;
-function busy(on) { ["flash", "study"].forEach(id => $(id).disabled = on); }
+function busy(on) { $("flash").disabled = on; if (on) $("study").disabled = true; else updateSend(); }
 function startPolling(title) {
   offset = 0; $("log").textContent = ""; busy(true);
   setStatus("jobState", title + "...", "");
@@ -563,7 +756,7 @@ function startPolling(title) {
     if (j.lines.length) { const log = $("log"); log.textContent += j.lines.join("\n") + "\n"; log.scrollTop = log.scrollHeight; }
     offset = j.next;
     if (j.state !== "running") {
-      clearInterval(polling); busy(false);
+      clearInterval(polling); polling = null; busy(false);
       setStatus("jobState", j.state === "ok" ? "Done" : "Failed", j.state === "ok" ? "ok" : "bad");
     }
   }, 500);
@@ -573,16 +766,15 @@ $("refresh").onclick = (e) => { e.preventDefault(); loadState(); };
 $("pickFile").onclick = async (e) => { e.preventDefault();
   const r = await api("/api/choose", { kind: "file" }); if (r.path) { $("file").value = r.path; document.querySelector('input[value=file]').checked = true; } };
 $("pickFolder").onclick = async (e) => { e.preventDefault();
-  const r = await api("/api/choose", { kind: "folder" }); if (r.path) { $("folder").value = r.path; checkPack(); } };
-$("folder").onchange = checkPack;
+  const r = await api("/api/choose", { kind: "folder" }); if (r.path) { $("folder").value = r.path; loadPack(); } };
+$("folder").onchange = loadPack;
+document.querySelectorAll("input[name=pack]").forEach(r => r.onchange = () => { store.set("packSource", packSource()); loadPack(); });
+if (store.get("packSource") === "folder") document.querySelector("input[value=folder]").checked = true;
+$("all").onclick = () => { document.querySelectorAll("#tracks input").forEach(i => i.checked = true); updateSend(); };
+$("none").onclick = () => { document.querySelectorAll("#tracks input").forEach(i => i.checked = false); updateSend(); };
+$("find").onclick = (e) => { e.preventDefault(); store.set("host", ""); findReader(); };
+$("host").onchange = () => { const h = $("host").value.trim(); if (h) checkHost(h).catch(err => setStatus("hostStatus", err.message, "bad")); };
 $("pr").onchange = () => { document.querySelector('input[value=pr]').checked = true; };
-$("host").value = store.get("host") || "crosspoint.local";
-$("check").onclick = async (e) => { e.preventDefault();
-  setStatus("hostStatus", "Checking...");
-  try { const r = await api("/api/check-reader", { host: $("host").value });
-        store.set("host", $("host").value);
-        setStatus("hostStatus", "Connected" + (r.status.version ? " (firmware " + r.status.version + ")" : ""), "ok"); }
-  catch (err) { setStatus("hostStatus", err.message, "bad"); } };
 $("flash").onclick = async () => {
   const source = document.querySelector('input[name=src]:checked').value;
   if (!$("port").value && !confirm("No USB device is listed. Try anyway? The flasher will wait 30 seconds for one.")) return;
@@ -592,11 +784,12 @@ $("flash").onclick = async () => {
 };
 $("study").onclick = async () => {
   try { store.set("host", $("host").value);
-        await api("/api/study", { host: $("host").value, folder: $("folder").value.trim() });
+        if (!$("host").value.trim()) throw new Error("Find your Sticky first (open File Transfer on it).");
+        await api("/api/study", { host: $("host").value.trim(), folder: pack.folder, tracks: picked() });
         setStatus("studyStatus", ""); startPolling("Sending study pack"); }
   catch (e) { setStatus("studyStatus", e.message, "bad"); }
 };
-loadState(); loadPrs();
+loadState(); loadPrs(); loadPack(); findReader();
 </script>
 </body>
 </html>
