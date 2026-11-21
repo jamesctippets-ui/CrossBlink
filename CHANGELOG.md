@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Added
+
+- Study mode on touch devices: Home > Study runs Cert Study Hub flashcards, quizzes, timed practice tests and a matching game offline from a study pack on the SD card, and logs results so the app can import them.
+
 ## [v1.6.1] - 2026-10-03
 
 ### Added
