@@ -4,6 +4,8 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include "AtomicFile.h"
+
 bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
   Storage.mkdir("/.crosspoint");
   String json;
@@ -75,14 +77,59 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
       readPath = recoveryPath.c_str();
     }
   }
-  String json = Storage.readFile(readPath);
-  if (json.isEmpty()) {
-    LOG_ERR("PERSIST", "Failed to read %s (empty)", path);
+  // Preserve the legacy 50,000-byte limit, but reject an oversized/short read
+  // instead of parsing a truncated prefix. The HAL sizes once and reads in bulk,
+  // avoiding one String append and SD call per byte. This cold-path buffer is
+  // bounded; a stack buffer of this size is unsafe on device tasks.
+  constexpr size_t MAX_STORE_BYTES = 50000;
+  std::string json;
+  if (!Storage.readFileToString("PERSIST", readPath, MAX_STORE_BYTES, json) || json.empty()) {
+    LOG_ERR("PERSIST", "Failed to read %s (empty or incomplete)", path);
     return false;
   }
   auto error = deserializeJson(doc, json);
   if (error) {
     LOG_ERR("PERSIST", "JSON parse error in %s: %s", path, error.c_str());
+    return false;
+  }
+  return true;
+}
+
+namespace {
+const atomic_file::Operations ATOMIC_OPS{
+    nullptr,
+    [](void*, const char* path) { return Storage.exists(path); },
+    [](void*, const char* path) { return Storage.remove(path); },
+    [](void*, const char* from, const char* to) { return Storage.rename(from, to); },
+};
+}  // namespace
+
+bool PersistableStoreBase::recoverAtomicFile(const char* path) {
+  const std::string backup = std::string(path) + ".bak";
+  if (atomic_file::recover(ATOMIC_OPS, path, backup.c_str())) return true;
+  LOG_ERR("PERSIST", "Could not recover %s from backup", path);
+  return false;
+}
+
+bool PersistableStoreBase::writeDocToFileAtomic(const char* path, const JsonDocument& doc) {
+  if (!recoverAtomicFile(path)) return false;
+  Storage.mkdir("/.crosspoint");
+  // Two small cold-path names; stream the JSON instead of allocating its full
+  // serialized representation alongside the document on C3.
+  const std::string temporary = std::string(path) + ".tmp";
+  const std::string backup = std::string(path) + ".bak";
+  HalFile file;
+  if (!Storage.openFileForWrite("PERSIST", temporary.c_str(), file)) return false;
+  const size_t expected = measureJson(doc);
+  const size_t written = serializeJson(doc, file);
+  const bool synced = written == expected && file.sync();
+  const bool closed = file.close();
+  if (!synced || !closed) {
+    LOG_ERR("PERSIST", "Could not write/sync %s", temporary.c_str());
+    return false;
+  }
+  if (!atomic_file::publish(ATOMIC_OPS, path, temporary.c_str(), backup.c_str())) {
+    LOG_ERR("PERSIST", "Could not publish %s; previous settings retained for recovery", path);
     return false;
   }
   return true;
