@@ -6,21 +6,13 @@
 
 #include <cstdio>
 
-#include "components/UITheme.h"
-
-namespace {
-constexpr int kOptionMaxLines = 3;
-constexpr int kOptionMinLines = 2;
-constexpr int kQuestionMinLines = 3;
-}  // namespace
-
 unsigned StudyQuizActivity::examLengthFor(const study::TrackInfo& track) {
   const unsigned wanted = track.exam.length > 0 ? track.exam.length : kDefaultExamLength;
   return wanted < track.questions ? wanted : track.questions;
 }
 
 void StudyQuizActivity::onEnter() {
-  Activity::onEnter();
+  StudyBookActivity::onEnter();
   state = State::Error;
   if (allocLineBuffer() && questions.open(std::string(study::kStudyRoot) + "/" + track.key + "/questions.jsonl")) {
     buildSession();
@@ -30,6 +22,7 @@ void StudyQuizActivity::onEnter() {
       state = State::Question;
     }
   }
+  buildPage();
   requestUpdate();
 }
 
@@ -138,6 +131,7 @@ bool StudyQuizActivity::onTick() {
   if (left == 0) {
     LOG_INF("STUDY", "Practice test time is up at question %u", static_cast<unsigned>(position + 1));
     finishSession();
+    buildPage();
   }
   return true;
 }
@@ -155,6 +149,10 @@ bool StudyQuizActivity::onTap(const int id) {
         if (mode == Mode::Quiz) {
           submitCurrent();
           state = State::Feedback;
+          buildPage();
+        } else {
+          // Practice test: the pick is marked and OK on Next moves on, so a choice can still be changed.
+          focusChoice(HitSubmit);
         }
         return true;
       }
@@ -165,6 +163,7 @@ bool StudyQuizActivity::onTap(const int id) {
         } else {
           advance();
         }
+        buildPage();
         return true;
       }
       return false;
@@ -172,6 +171,7 @@ bool StudyQuizActivity::onTap(const int id) {
     case State::Feedback:
       if (id != HitNext) return false;
       advance();
+      buildPage();
       return true;
     case State::Results:
       if (id == HitDone) {
@@ -182,11 +182,13 @@ bool StudyQuizActivity::onTap(const int id) {
         reviewIndex = 0;
         if (!loadQuestion(order[missed[0]])) return false;
         state = State::Review;
+        buildPage();
         return true;
       }
       if (id == HitRetry) {
         buildSession();
         state = !order.empty() && loadQuestion(order[0]) ? State::Question : State::Error;
+        buildPage();
         return true;
       }
       return false;
@@ -195,6 +197,7 @@ bool StudyQuizActivity::onTap(const int id) {
       ++reviewIndex;
       while (reviewIndex < missed.size() && !loadQuestion(order[missed[reviewIndex]])) ++reviewIndex;
       if (reviewIndex >= missed.size()) state = State::Results;
+      buildPage();
       return true;
     case State::Empty:
     case State::Error:
@@ -204,189 +207,154 @@ bool StudyQuizActivity::onTap(const int id) {
   return false;
 }
 
-void StudyQuizActivity::render(RenderLock&&) {
-  clearHits();
-  char subtitle[64];
-  const char* title = mode == Mode::Quiz ? tr(STR_STUDY_QUIZ) : tr(STR_STUDY_PRACTICE_TEST);
+bool StudyQuizActivity::onPastEnd() {
+  // Turning past the last page of feedback or a reviewed miss goes on, like the Next button.
+  if (state == State::Feedback || state == State::Review) return onTap(HitNext);
+  return false;
+}
+
+bool StudyQuizActivity::onBeforeStart() {
+  // In the review, paging back from a miss goes to the previous one.
+  if (state != State::Review || reviewIndex == 0) return false;
+  size_t index = reviewIndex;
+  while (index > 0) {
+    --index;
+    if (loadQuestion(order[missed[index]])) {
+      reviewIndex = index;
+      buildPage(true);
+      return true;
+    }
+  }
+  // Nothing earlier could be read; reload the current one so the page still matches.
+  loadQuestion(order[missed[reviewIndex]]);
+  return false;
+}
+
+bool StudyQuizActivity::choicePicked(const int id) const {
+  return state == State::Question && id >= 0 && id < question.optionCount && (selection & (1u << id)) != 0;
+}
+
+bool StudyQuizActivity::choiceEnabled(const int id) const { return id != HitSubmit || selection != 0; }
+
+const char* StudyQuizActivity::modeTitle() const {
+  return mode == Mode::Quiz ? tr(STR_STUDY_QUIZ) : tr(STR_STUDY_PRACTICE_TEST);
+}
+
+void StudyQuizActivity::statusTitle(char* out, const size_t size) const {
+  char progress[64];
   if (state == State::Question || state == State::Feedback) {
     const unsigned shown = static_cast<unsigned>(position + 1);
     const unsigned total = static_cast<unsigned>(order.size());
     if (mode == Mode::PracticeTest && shownMinutesLeft >= 0) {
-      snprintf(subtitle, sizeof(subtitle), tr(STR_STUDY_PROGRESS_TIME_FORMAT), shown, total,
+      snprintf(progress, sizeof(progress), tr(STR_STUDY_PROGRESS_TIME_FORMAT), shown, total,
                static_cast<unsigned>(shownMinutesLeft));
     } else {
-      snprintf(subtitle, sizeof(subtitle), "%u / %u", shown, total);
+      snprintf(progress, sizeof(progress), "%u / %u", shown, total);
     }
+    snprintf(out, size, "%s %s", modeTitle(), progress);
   } else if (state == State::Review) {
-    snprintf(subtitle, sizeof(subtitle), tr(STR_STUDY_REVIEW_FORMAT), static_cast<unsigned>(reviewIndex + 1),
+    snprintf(progress, sizeof(progress), tr(STR_STUDY_REVIEW_FORMAT), static_cast<unsigned>(reviewIndex + 1),
              static_cast<unsigned>(missed.size()));
+    snprintf(out, size, "%s, %s", modeTitle(), progress);
+  } else if (categoryName() != nullptr) {
+    snprintf(out, size, "%s, %s", modeTitle(), categoryName());
   } else {
-    snprintf(subtitle, sizeof(subtitle), "%s", categoryName() != nullptr ? categoryName() : track.label.c_str());
+    snprintf(out, size, "%s", modeTitle());
   }
-  const auto layout = StudyUi::beginScreen(renderer, mappedInput, title, subtitle);
+}
+
+float StudyQuizActivity::statusProgress() const {
   switch (state) {
     case State::Question:
-      renderQuestion(layout.content);
+    case State::Feedback:
+      return order.empty() ? 0.0f : static_cast<float>(position) * 100.0f / static_cast<float>(order.size());
+    case State::Review:
+      return missed.empty() ? 100.0f : static_cast<float>(reviewIndex) * 100.0f / static_cast<float>(missed.size());
+    case State::Results:
+      return 100.0f;
+    case State::Empty:
+    case State::Error:
+      break;
+  }
+  return 0.0f;
+}
+
+void StudyQuizActivity::buildPage(const bool focusLast) {
+  beginPage();
+  switch (state) {
+    case State::Question:
+      buildQuestionPage();
       break;
     case State::Feedback:
-      renderFeedback(layout.content);
-      break;
-    case State::Results:
-      renderResults(layout.content);
+      buildAnswerPage(true);
       break;
     case State::Review:
-      renderReview(layout.content);
+      buildAnswerPage(false);
+      break;
+    case State::Results:
+      buildResultsPage();
       break;
     case State::Empty:
-    case State::Error: {
-      const Rect& c = layout.content;
-      const int body = StudyUi::bodyFont();
-      UITheme::drawCenteredWrappedText(renderer, c, body, c.y + c.height / 3,
-                                       state == State::Empty ? tr(STR_STUDY_NOTHING_HERE) : tr(STR_STUDY_LOAD_FAILED),
-                                       4);
-      const int h = renderer.getLineHeight(body) + StudyUi::kBoxPadding * 3;
-      const Rect button{c.x, c.y + c.height - h, c.width, h};
-      StudyUi::drawBox(renderer, button, body, tr(STR_STUDY_DONE), 1, StudyUi::BoxStyle::Normal, true);
-      addHit(button, HitDone);
+    case State::Error:
+      addText(state == State::Empty ? tr(STR_STUDY_NOTHING_HERE) : tr(STR_STUDY_LOAD_FAILED), study::TextStyle::Regular,
+              false);
+      addAction(tr(STR_STUDY_DONE), HitDone);
       break;
-    }
   }
-  renderer.displayBuffer();
+  endPage(focusLast);
 }
 
-void StudyQuizActivity::renderQuestion(const Rect& c) {
-  const int body = StudyUi::bodyFont();
-  const int lineHeight = renderer.getLineHeight(body);
-  const bool needsSubmit = mode == Mode::PracticeTest || question.type == study::QuestionType::Multi;
-  const int buttonHeight = lineHeight + StudyUi::kBoxPadding * 3;
-  const int bottom = needsSubmit ? c.y + c.height - buttonHeight - StudyUi::kBoxGap : c.y + c.height;
-
-  // Fit options first at up to 3 lines each; if the question would get fewer than 3 lines, squeeze options to 2.
-  int optionLines = kOptionMaxLines;
-  int heights[study::kMaxOptions] = {};
-  int optionsHeight = 0;
-  for (int attempt = 0; attempt < 2; ++attempt) {
-    optionsHeight = 0;
-    for (uint8_t i = 0; i < question.optionCount; ++i) {
-      heights[i] = StudyUi::boxHeight(renderer, body, c.width, question.options[i].c_str(), optionLines);
-      optionsHeight += heights[i] + StudyUi::kBoxGap;
-    }
-    if ((bottom - c.y - optionsHeight) / lineHeight >= kQuestionMinLines) break;
-    optionLines = kOptionMinLines;
-  }
-
-  int y = c.y;
-  if (question.type == study::QuestionType::Multi) {
-    y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, tr(STR_STUDY_SELECT_ALL), 1, EpdFontFamily::ITALIC);
-  }
-  const int questionLines = (bottom - y - optionsHeight) / lineHeight;
-  y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, question.text.c_str(),
-                              questionLines > 1 ? questionLines : 1, EpdFontFamily::BOLD);
-  y += StudyUi::kBoxGap;
-  for (uint8_t i = 0; i < question.optionCount; ++i) {
-    const Rect box{c.x, y, c.width, heights[i]};
-    const bool picked = (selection & (1u << i)) != 0;
-    StudyUi::drawBox(renderer, box, body, question.options[i].c_str(), optionLines,
-                     picked ? StudyUi::BoxStyle::Selected : StudyUi::BoxStyle::Normal);
-    addHit(box, i);
-    y += heights[i] + StudyUi::kBoxGap;
-  }
-  if (needsSubmit) {
-    const Rect button{c.x, c.y + c.height - buttonHeight, c.width, buttonHeight};
-    const char* label = mode == Mode::Quiz ? tr(STR_STUDY_CHECK) : tr(STR_STUDY_NEXT);
-    StudyUi::drawBox(renderer, button, body, label, 1,
-                     selection != 0 ? StudyUi::BoxStyle::Selected : StudyUi::BoxStyle::Dimmed, true);
-    addHit(button, HitSubmit);
+void StudyQuizActivity::buildQuestionPage() {
+  const bool multi = question.type == study::QuestionType::Multi;
+  if (multi) addText(tr(STR_STUDY_SELECT_ALL), study::TextStyle::Italic, false);
+  addText(question.text.c_str(), study::TextStyle::Bold, multi);
+  for (uint8_t i = 0; i < question.optionCount; ++i) addOption(question.options[i].c_str(), i);
+  if (mode == Mode::PracticeTest || multi) {
+    addAction(mode == Mode::Quiz ? tr(STR_STUDY_CHECK) : tr(STR_STUDY_NEXT), HitSubmit);
   }
 }
 
-void StudyQuizActivity::renderFeedback(const Rect& c) {
-  const int body = StudyUi::bodyFont();
-  const int lineHeight = renderer.getLineHeight(body);
-  const int buttonHeight = lineHeight + StudyUi::kBoxPadding * 3;
-  const int bottom = c.y + c.height - buttonHeight - StudyUi::kBoxGap;
-  const bool right = study::isAnswerCorrect(question, selection);
-  int y = c.y;
-  y += StudyUi::drawParagraph(renderer, StudyUi::titleFont(), c.x, y, c.width,
-                              right ? tr(STR_STUDY_CORRECT) : tr(STR_STUDY_INCORRECT), 1, EpdFontFamily::BOLD);
-  y += StudyUi::kBoxGap;
-  y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, question.text.c_str(), 3);
-  y += StudyUi::kBoxGap;
+void StudyQuizActivity::buildAnswerPage(const bool feedback) {
+  const uint8_t chosenMask = feedback ? selection : chosenMasks[missed[reviewIndex]];
+  const bool right = chosenMask != 0 && study::isAnswerCorrect(question, chosenMask);
+  if (feedback) {
+    addText(right ? tr(STR_STUDY_CORRECT) : tr(STR_STUDY_INCORRECT), study::TextStyle::Bold, false);
+    addText(question.text.c_str());
+  } else {
+    addText(question.text.c_str(), study::TextStyle::Bold, false);
+  }
   if (!right) {
-    const std::string chosen = std::string(tr(STR_STUDY_YOUR_ANSWER)) + " " + optionsText(selection);
-    y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, chosen.c_str(), 3);
+    chosenLine = std::string(tr(STR_STUDY_YOUR_ANSWER)) + " " +
+                 (chosenMask != 0 ? optionsText(chosenMask) : std::string(tr(STR_STUDY_NO_ANSWER)));
+    addText(chosenLine.c_str());
   }
-  const std::string answer = std::string(tr(STR_STUDY_RIGHT_ANSWER)) + " " + optionsText(question.answerMask);
-  y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, answer.c_str(), 4, EpdFontFamily::BOLD);
-  y += StudyUi::kBoxGap;
-  const int whyLines = (bottom - y) / lineHeight;
-  if (whyLines > 0) StudyUi::drawParagraph(renderer, body, c.x, y, c.width, question.why.c_str(), whyLines);
-  const Rect button{c.x, c.y + c.height - buttonHeight, c.width, buttonHeight};
-  const bool last = position + 1 >= order.size();
-  StudyUi::drawBox(renderer, button, body, last ? tr(STR_STUDY_SEE_RESULTS) : tr(STR_STUDY_NEXT), 1,
-                   StudyUi::BoxStyle::Selected, true);
-  addHit(button, HitNext);
+  answerLine = std::string(tr(STR_STUDY_RIGHT_ANSWER)) + " " + optionsText(question.answerMask);
+  addText(answerLine.c_str(), study::TextStyle::Bold);
+  addText(question.why.c_str());
+  const bool last = feedback ? position + 1 >= order.size() : reviewIndex + 1 >= missed.size();
+  addAction(last ? tr(STR_STUDY_SEE_RESULTS) : tr(STR_STUDY_NEXT), HitNext);
 }
 
-void StudyQuizActivity::renderResults(const Rect& c) {
-  const int body = StudyUi::bodyFont();
-  const int title = StudyUi::titleFont();
-  const int lineHeight = renderer.getLineHeight(body);
+void StudyQuizActivity::buildResultsPage() {
   const unsigned right = score();
   const unsigned total = static_cast<unsigned>(order.size());
   const unsigned pct = total > 0 ? (right * 100 + total / 2) / total : 0;
-  char line[96];
-  int y = c.y + c.height / 6;
-  if (mode == Mode::PracticeTest && shownMinutesLeft == 0) {
-    y += UITheme::drawCenteredWrappedText(renderer, c, body, y, tr(STR_STUDY_TIME_UP), 1);
-    y += StudyUi::kBoxGap;
-  }
-  snprintf(line, sizeof(line), tr(STR_STUDY_SCORE_FORMAT), right, total, pct);
-  y += UITheme::drawCenteredWrappedText(renderer, c, title, y, line, 2, true, EpdFontFamily::BOLD);
-  y += StudyUi::kBoxGap;
+  const bool timeUp = mode == Mode::PracticeTest && shownMinutesLeft == 0;
+  if (timeUp) addText(tr(STR_STUDY_TIME_UP), study::TextStyle::Italic, false);
+  snprintf(scoreLine, sizeof(scoreLine), tr(STR_STUDY_SCORE_FORMAT), right, total, pct);
+  addText(scoreLine, study::TextStyle::Bold, timeUp);
   if (mode == Mode::PracticeTest && track.exam.passPct > 0) {
-    snprintf(line, sizeof(line), pct >= track.exam.passPct ? tr(STR_STUDY_PASS_FORMAT) : tr(STR_STUDY_FAIL_FORMAT),
+    snprintf(passLine, sizeof(passLine),
+             pct >= track.exam.passPct ? tr(STR_STUDY_PASS_FORMAT) : tr(STR_STUDY_FAIL_FORMAT),
              static_cast<unsigned>(track.exam.passPct));
-    y += UITheme::drawCenteredWrappedText(renderer, c, body, y, line, 2);
+    addText(passLine);
   }
-
-  const int buttonHeight = lineHeight + StudyUi::kBoxPadding * 3;
-  const int halfWidth = (c.width - StudyUi::kBoxGap) / 2;
-  const Rect left{c.x, c.y + c.height - buttonHeight, halfWidth, buttonHeight};
-  const Rect rightBox{c.x + halfWidth + StudyUi::kBoxGap, left.y, halfWidth, buttonHeight};
-  StudyUi::drawBox(renderer, left, body, tr(STR_STUDY_DONE), 1, StudyUi::BoxStyle::Normal, true);
-  addHit(left, HitDone);
   if (!missed.empty()) {
-    snprintf(line, sizeof(line), tr(STR_STUDY_REVIEW_MISSED_FORMAT), static_cast<unsigned>(missed.size()));
-    StudyUi::drawBox(renderer, rightBox, body, line, 2, StudyUi::BoxStyle::Selected, true);
-    addHit(rightBox, HitReview);
+    snprintf(reviewLabel, sizeof(reviewLabel), tr(STR_STUDY_REVIEW_MISSED_FORMAT),
+             static_cast<unsigned>(missed.size()));
+    addAction(reviewLabel, HitReview);
   } else {
-    StudyUi::drawBox(renderer, rightBox, body, tr(STR_STUDY_TRY_AGAIN), 1, StudyUi::BoxStyle::Selected, true);
-    addHit(rightBox, HitRetry);
+    addAction(tr(STR_STUDY_TRY_AGAIN), HitRetry);
   }
-}
-
-void StudyQuizActivity::renderReview(const Rect& c) {
-  const int body = StudyUi::bodyFont();
-  const int lineHeight = renderer.getLineHeight(body);
-  const int buttonHeight = lineHeight + StudyUi::kBoxPadding * 3;
-  const int bottom = c.y + c.height - buttonHeight - StudyUi::kBoxGap;
-  const size_t pos = missed[reviewIndex];
-  int y = c.y;
-  y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, question.text.c_str(), 5, EpdFontFamily::BOLD);
-  y += StudyUi::kBoxGap;
-  const std::string chosen =
-      std::string(tr(STR_STUDY_YOUR_ANSWER)) + " " +
-      (chosenMasks[pos] != 0 ? optionsText(chosenMasks[pos]) : std::string(tr(STR_STUDY_NO_ANSWER)));
-  y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, chosen.c_str(), 3);
-  const std::string answer = std::string(tr(STR_STUDY_RIGHT_ANSWER)) + " " + optionsText(question.answerMask);
-  y += StudyUi::drawParagraph(renderer, body, c.x, y, c.width, answer.c_str(), 4, EpdFontFamily::BOLD);
-  y += StudyUi::kBoxGap;
-  const int whyLines = (bottom - y) / lineHeight;
-  if (whyLines > 0) StudyUi::drawParagraph(renderer, body, c.x, y, c.width, question.why.c_str(), whyLines);
-  const Rect button{c.x, c.y + c.height - buttonHeight, c.width, buttonHeight};
-  const bool last = reviewIndex + 1 >= missed.size();
-  StudyUi::drawBox(renderer, button, body, last ? tr(STR_STUDY_SEE_RESULTS) : tr(STR_STUDY_NEXT), 1,
-                   StudyUi::BoxStyle::Selected, true);
-  addHit(button, HitNext);
+  addAction(tr(STR_STUDY_DONE), HitDone);
 }

@@ -14,9 +14,11 @@
 ### Changed
 
 - Dashboard Home on the Sticky: swiping left now opens a Study page with your study stats (cards due, day streak, quiz score, today's and all-time counts, and progress per track) instead of showing the next recent book. Tap a track to study it, or swipe right to go back to Home.
+- Study mode: Flashcards, Quiz and Practice test now look like a book, using the reader's font, margins and status bars, and work with the buttons: Down and Up turn pages and move between choices, OK picks, and holding Up or Down leaves.
 
 ### Fixed
 
+- Study mode: long questions, answers and explanations are no longer cut off; they continue on the next page.
 - The documentation site and flasher now load with their styles and images when served from GitHub Pages at /CrossBlink/, and the site's top bar links to the Flasher.
 - Flasher: the device picker now lists every serial port instead of only Espressif ones, so a Sticky that reports another USB vendor ID shows up, and the page has troubleshooting steps for when it does not.
 - Study mode: choosing Quiz, Practice test or Match from a track no longer opens Flashcards instead.
