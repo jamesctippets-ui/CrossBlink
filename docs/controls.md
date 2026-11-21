@@ -33,6 +33,7 @@ X4 Pro only. See [Home Button (X4 Pro)](#home-button-x4-pro) below.
 
 - **Short-press** action
 - **Long-press** action
+- **Double-press** action
 - **Power + Up Combo** action
 - **Quick-return from Footnotes** (appears only after you assign **Footnotes** to a button)
 
@@ -216,6 +217,7 @@ Defaults:
 
 - Power **Short-press**: **Ignore**
 - Power **Long-press**: **Sleep/Wake**
+- Power **Double-press**: **Ignore**
 - **Long-press Back** (button devices, in the reader): **Browse Files**
 - **Long-press Menu** (button devices, in the reader): **Ignore**
 - **Power + Up Combo**: off
@@ -248,14 +250,27 @@ Available actions include:
 
 Not every list offers every action. For example, **Long-press Back** and
 **Long-press Menu** have no **Next Page**, **Previous Page**, or **Nearby
-Position Sync**, and the **Power + Up Combo** has no **Tilt Page Turn**. Actions
-for hardware your device does not have are hidden.
+Position Sync**, the **Power + Up Combo** has no **Tilt Page Turn**, and Power
+**Double-press** has no **Quick Lock**, **Quick Actions**, or **Tilt Page Turn**.
+Actions for hardware your device does not have are hidden.
 
 Power short- and long-press actions are separate. A short press wakes the
 device only when its **Short-press** action is **Sleep/Wake** or **Wake**.
 **Sleep** only puts an awake device to sleep; **Wake** does nothing while the
 device is awake. Holding Power always wakes a sleeping device. For the full
 startup instructions, see [Power On / Off](./user-guide.md#power-on--off).
+
+### Power Double-press
+
+Press Power twice quickly (the second press within about 0.3 seconds of
+letting go of the first) to run the **Double-press** action. It is off
+(**Ignore**) by default, and while it is off nothing about Power changes.
+
+When a **Double-press** action is set, a single short press waits that same
+0.3 seconds before it runs, so the device can tell one press from two. Long
+presses, including holding Power to sleep, are not delayed. On screens where a
+short Power press works as **Select** (menus and lists), Power keeps selecting
+right away and the double press is not used there.
 
 Assign **Library** to the Power button, **Long-press Back** or **Long-press
 Menu**, the combo shortcuts, the Home button, or Quick Actions to open the book

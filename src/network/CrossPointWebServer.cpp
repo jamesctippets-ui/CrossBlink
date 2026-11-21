@@ -1833,7 +1833,8 @@ void CrossPointWebServer::handleGetSettings() const {
       }
       case SettingType::ENUM: {
         doc["type"] = "enum";
-        if (s.valuePtr == &CrossPointSettings::shortPwrBtn || s.valuePtr == &CrossPointSettings::longPwrBtn) {
+        if (s.valuePtr == &CrossPointSettings::shortPwrBtn || s.valuePtr == &CrossPointSettings::longPwrBtn ||
+            s.valuePtr == &CrossPointSettings::doublePwrBtn) {
           doc["footnotesIndex"] = enumDisplayIndexForWeb(s, CrossPointSettings::FOOTNOTES);
         } else if (s.valuePtr == &CrossPointSettings::longPressMenuAction ||
                    s.valuePtr == &CrossPointSettings::longPressBackAction) {

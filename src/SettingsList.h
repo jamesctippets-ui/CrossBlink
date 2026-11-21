@@ -92,6 +92,12 @@ inline bool isPageGestureSettingDisabled(const SettingInfo& setting) {
                                               setting.valuePtr == &CrossPointSettings::previousPageGesture);
 }
 
+// Short, long and double Power presses share the Power action catalog.
+inline bool isPowerButtonActionSetting(const SettingInfo& setting) {
+  return settingKeyIs(setting, "shortPwrBtn") || settingKeyIs(setting, "longPwrBtn") ||
+         settingKeyIs(setting, "doublePwrBtn");
+}
+
 inline bool isSideButtonActionSetting(const SettingInfo& setting) {
   return settingKeyIs(setting, "sideButtonUpShort") || settingKeyIs(setting, "sideButtonUpLong") ||
          settingKeyIs(setting, "sideButtonDownShort") || settingKeyIs(setting, "sideButtonDownLong");
@@ -359,7 +365,7 @@ inline SettingInfo buildSleepScreenSetting() {
   return s;
 }
 
-enum class ShortcutOptionCatalog { PowerButton, ButtonChord, LongPress, HomeButton, SideButton };
+enum class ShortcutOptionCatalog { PowerButton, ButtonChord, LongPress, HomeButton, SideButton, PowerDoublePress };
 
 constexpr uint8_t SHORTCUT_OPTION_UNAVAILABLE = UINT8_MAX;
 
@@ -374,6 +380,18 @@ inline uint8_t shortcutRawValue(const ShortcutOptionCatalog catalog, const Cross
       return static_cast<uint8_t>(action);
     case ShortcutOptionCatalog::PowerButton:
       return static_cast<uint8_t>(action);
+    case ShortcutOptionCatalog::PowerDoublePress:
+      switch (action) {
+        // Quick Lock and Quick Actions track which physical gesture owns
+        // them, and the double press is not one of those triggers yet. Tilt
+        // has no shortcut handler (the chords leave it out for the same reason).
+        case Action::QUICK_LOCK:
+        case Action::QUICK_ACTIONS:
+        case Action::TOGGLE_TILT_PAGE_TURN:
+          return SHORTCUT_OPTION_UNAVAILABLE;
+        default:
+          return static_cast<uint8_t>(action);
+      }
     case ShortcutOptionCatalog::ButtonChord:
       switch (action) {
         case Action::IGNORE:
@@ -667,9 +685,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
       if (setting.valuePtr == &CrossPointSettings::sleepScreen) {
         removeEnumRawValue(setting, static_cast<uint8_t>(CrossPointSettings::READING_STATS_SLEEP));
         removeEnumRawValue(setting, static_cast<uint8_t>(CrossPointSettings::MINIMAL_STATS_SLEEP));
-      } else if (setting.valuePtr == &CrossPointSettings::shortPwrBtn ||
-                 setting.valuePtr == &CrossPointSettings::longPwrBtn ||
-                 setting.valuePtr == &CrossPointSettings::homeButtonTapAction ||
+      } else if (isPowerButtonActionSetting(setting) || setting.valuePtr == &CrossPointSettings::homeButtonTapAction ||
                  setting.valuePtr == &CrossPointSettings::homeButtonDoubleTapAction ||
                  setting.valuePtr == &CrossPointSettings::homeButtonLongPressAction ||
                  isSideButtonActionSetting(setting) || isFrontButtonActionSetting(setting)) {
@@ -767,7 +783,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            }),
             v.end());
     for (auto& setting : v) {
-      if (settingKeyIs(setting, "shortPwrBtn") || settingKeyIs(setting, "longPwrBtn")) {
+      if (isPowerButtonActionSetting(setting)) {
         removeEnumRawValue(setting, CrossPointSettings::TOGGLE_HOME_BUTTON_IN_READER);
       } else if (settingKeyIs(setting, "powerChordAction") || settingKeyIs(setting, "sideButtonChordAction")) {
         removeEnumRawValue(setting, shortcutRawValue(ShortcutOptionCatalog::ButtonChord,
@@ -777,8 +793,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
   }
   if (!Frontlight.present() || !gpio.hasTouch()) {
     for (auto& setting : v) {
-      if (!settingKeyIs(setting, "shortPwrBtn") && !settingKeyIs(setting, "longPwrBtn") &&
-          !settingKeyIs(setting, "powerChordAction") && !settingKeyIs(setting, "sideButtonChordAction")) {
+      if (!isPowerButtonActionSetting(setting) && !settingKeyIs(setting, "powerChordAction") &&
+          !settingKeyIs(setting, "sideButtonChordAction")) {
         continue;
       }
       const auto catalog = settingKeyIs(setting, "powerChordAction") || settingKeyIs(setting, "sideButtonChordAction")
@@ -1021,11 +1037,13 @@ inline std::vector<SettingInfo> buildControlsHomeButtonSettingsList(const std::v
 
 inline std::vector<SettingInfo> buildControlsPowerSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
-  settings.reserve(4);
+  settings.reserve(5);
   addSettingByKey(settings, allSettings, "shortPwrBtn");
   addSettingByKey(settings, allSettings, "longPwrBtn");
+  addSettingByKey(settings, allSettings, "doublePwrBtn");
   if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ||
       SETTINGS.longPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ||
+      SETTINGS.doublePwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ||
       SETTINGS.longPressMenuAction == CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_FOOTNOTES ||
       SETTINGS.longPressBackAction == CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_FOOTNOTES) {
     addSettingByName(settings, allSettings, StrId::STR_PWR_BTN_FOOTNOTE_BACK);

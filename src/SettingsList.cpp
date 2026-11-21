@@ -257,6 +257,8 @@ void forEachBaseSetting(SettingVisitor visitor, void* context) {
                           StrId::STR_CAT_CONTROLS));
   add(buildShortcutSetting(StrId::STR_LONG_PRESS_ACTION, &CrossPointSettings::longPwrBtn, "longPwrBtn",
                            ShortcutOptionCatalog::PowerButton));
+  add(buildShortcutSetting(StrId::STR_DOUBLE_PWR_BTN, &CrossPointSettings::doublePwrBtn, "doublePwrBtn",
+                           ShortcutOptionCatalog::PowerDoublePress));
   add(buildShortcutSetting(StrId::STR_POWER_BUTTON_CHORD, &CrossPointSettings::powerChordAction, "powerChordAction",
                            ShortcutOptionCatalog::ButtonChord));
   add(buildShortcutSetting(StrId::STR_SIDE_BUTTON_CHORD, &CrossPointSettings::sideButtonChordAction,
