@@ -17,6 +17,7 @@
 #include "MappedInputManager.h"
 #include "Memory.h"
 #include "MemoryBudget.h"
+#include "OnlineDictionary.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -79,6 +80,9 @@ void DictionaryLookupController::startLookup(const std::string& word, bool recor
   lookupCancelRequested = false;
   lookupReadError = false;
   lookupMatchedStem = false;
+  onlineSearchStarted_ = false;
+  onlineOutcome_ = static_cast<uint8_t>(OnlineDictionary::Result::Skipped);
+  onlineToastShown_ = false;
   recordHistory_ = recordHistory;
   state = LookupState::LookingUp;
   // CLEANUP: on Auto-only commit, delete only this line (gate below stays — it's the Auto check)
@@ -133,6 +137,10 @@ void DictionaryLookupController::requestBack() {
 
 DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput() {
   if (state == LookupState::LookingUp) {
+    if (!onlineToastShown_ && onlineSearchStarted_.load()) {
+      onlineToastShown_ = true;
+      showOnlineSearchToast();
+    }
     if (lookupDone) {
       state = LookupState::Idle;
       if (lookupCancelRequested || lookupCancelled) {
@@ -151,6 +159,8 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
         nextIsSuggestion = false;
         return LookupEvent::FoundDefinition;
       }
+
+      showOnlineFailureIfAny();
 
       // Try alt forms
       if (!searchingAltForms_ && hasAltForms_) {
@@ -527,6 +537,38 @@ void DictionaryLookupController::showMemoryErrorAndReset() {
   owner.requestUpdate();
 }
 
+void DictionaryLookupController::showOnlineSearchToast() {
+#if CROSSINK_APP_ONLINE_DICTIONARY
+  // Definition modals draw lookup progress inside their own frame; only the
+  // reader-level lookup paints a toast (same rule as startLookup()).
+  if (!lookupToastEnabled_) return;
+  RenderLock lock;
+  GUI.drawPopup(renderer, tr(STR_DICT_SEARCHING_ONLINE));
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+#endif
+}
+
+void DictionaryLookupController::showOnlineFailureIfAny() {
+#if CROSSINK_APP_ONLINE_DICTIONARY
+  const auto outcome = static_cast<OnlineDictionary::Result>(onlineOutcome_.load());
+  onlineOutcome_ = static_cast<uint8_t>(OnlineDictionary::Result::Skipped);
+  const char* message = nullptr;
+  if (outcome == OnlineDictionary::Result::NoNetwork) {
+    message = tr(STR_DICT_NO_KNOWN_WIFI);
+  } else if (outcome == OnlineDictionary::Result::Failed) {
+    message = tr(STR_DICT_ONLINE_FAILED);
+  }
+  if (!message || !lookupToastEnabled_) return;
+  {
+    RenderLock lock;
+    GUI.drawPopup(renderer, message);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  }
+  // Brief, like the "No word" popup, then the normal not-found flow continues.
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+#endif
+}
+
 void DictionaryLookupController::showNoWordPopup() {
   {
     // Serialize with render task — see comment in startLookup() for the race this prevents.
@@ -613,6 +655,21 @@ void DictionaryLookupController::runLookup() {
     }
   }
   lookupReadError = lookupReadError || foundLocation.readError;
+  // Offline first: Wi-Fi is only switched on for a genuine miss in every
+  // installed dictionary (not a read error or a cancel), which keeps the radio
+  // off for normal lookups.
+  if (!searchingAltForms_ && !foundLocation.found && !lookupReadError && !lookupCancelRequested &&
+      OnlineDictionary::isEnabled()) {
+    onlineSearchStarted_ = true;
+    DictLocation online;
+    const auto result =
+        OnlineDictionary::lookup(lookupWord, dictionaryPath, online, &DictionaryLookupController::cancelCallback, this);
+    onlineOutcome_ = static_cast<uint8_t>(result);
+    if (result == OnlineDictionary::Result::Found) {
+      foundLocation = std::move(online);
+      lookupMatchedStem = false;
+    }
+  }
   lookupCancelled = lookupCancelRequested.load();
   lookupDone = true;
   logDictionaryLookupTaskEnd();

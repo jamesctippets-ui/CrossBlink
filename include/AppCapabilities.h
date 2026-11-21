@@ -39,5 +39,21 @@
 #endif
 #endif
 
+// Cert Study Hub study mode (flashcards, quiz, practice test, match). Its screens are touch-driven, so it ships on
+// touch builds (the Sticky). Define CROSSINK_APP_STUDY_MODE=0 in platformio.local.ini to leave it out.
+#ifndef CROSSINK_APP_STUDY_MODE
+#define CROSSINK_APP_STUDY_MODE CROSSINK_APP_CAP_TOUCH
+#endif
+
 // Every button-only reader uses the full-screen menu and its bounded sample preview.
 #define CROSSINK_APP_READER_SAMPLE_PREVIEW (!CROSSINK_APP_CAP_TOUCH)
+
+// Online dictionary fallback: when the active offline dictionary has no entry,
+// briefly join a saved Wi-Fi network and query a web dictionary. Sticky-only:
+// the S3 has the internal RAM headroom for Wi-Fi + TLS during a reader session,
+// while the C3 targets keep their current offline-only behavior.
+#if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
+#define CROSSINK_APP_ONLINE_DICTIONARY 1
+#else
+#define CROSSINK_APP_ONLINE_DICTIONARY 0
+#endif

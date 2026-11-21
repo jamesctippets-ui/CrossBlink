@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "AppCapabilities.h"
 #include "CrossPointSettings.h"
 #include "DeviceCapabilities.h"
 #include "KOReaderCredentialStore.h"
@@ -616,9 +617,11 @@ inline SettingInfo buildSideButtonActionSetting(const StrId nameId, uint8_t Cros
 // UI consumers own their descriptors; persistence visits and releases each entry.
 // Counts include conditional publisher-font, touch and slide-switch entries.
 #if CROSSINK_SCALABLE_FONTS
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 113 + (CROSSINK_APP_CAP_TOUCH ? 5 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY =
+    113 + (CROSSINK_APP_CAP_TOUCH ? 5 : 0) + (CROSSINK_APP_ONLINE_DICTIONARY ? 1 : 0);
 #else
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 112 + (CROSSINK_APP_CAP_TOUCH ? 5 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY =
+    112 + (CROSSINK_APP_CAP_TOUCH ? 5 : 0) + (CROSSINK_APP_ONLINE_DICTIONARY ? 1 : 0);
 #endif
 
 #if FREEINK_DEVICE_PICCO
@@ -835,7 +838,7 @@ inline void addSettingByName(std::vector<SettingInfo>& target, const std::vector
 
 inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> readerSettings;
-  readerSettings.reserve(11);
+  readerSettings.reserve(11 + (CROSSINK_APP_ONLINE_DICTIONARY ? 1 : 0));
   readerSettings.push_back(SettingInfo::Submenu(StrId::STR_READER_FONT_OPTIONS, SettingAction::ReaderFontOptions));
   readerSettings.push_back(SettingInfo::Submenu(StrId::STR_READER_PAGE_LAYOUT, SettingAction::ReaderPageLayout));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_STATUS_BARS, SettingAction::CustomiseStatusBar));
@@ -844,6 +847,9 @@ inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<
   addSettingByName(readerSettings, allSettings, StrId::STR_EMBEDDED_STYLE);
   addSettingByName(readerSettings, allSettings, StrId::STR_IMAGES);
   addSettingByName(readerSettings, allSettings, StrId::STR_DICTIONARY);
+#if CROSSINK_APP_ONLINE_DICTIONARY
+  addSettingByName(readerSettings, allSettings, StrId::STR_ONLINE_DICTIONARY_FALLBACK);
+#endif
   addSettingByName(readerSettings, allSettings, StrId::STR_INDEXING_METHOD);
   return readerSettings;
 }
