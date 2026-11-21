@@ -6,7 +6,7 @@
 
 #include "StudyListActivity.h"
 
-// One cert track: pick Flashcards, Quiz, Practice test or Match, and optionally narrow to one category.
+// One cert track: pick Flashcards, Quiz or Practice test, and optionally narrow to one category.
 class StudyTrackActivity final : public StudyListActivity {
  public:
   StudyTrackActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, study::TrackInfo track)
@@ -20,7 +20,7 @@ class StudyTrackActivity final : public StudyListActivity {
   void onRowChosen(int index) override;
 
  private:
-  enum Row : int { RowFlashcards, RowQuiz, RowPracticeTest, RowMatch, RowCategory, RowCount };
+  enum Row : int { RowFlashcards, RowQuiz, RowPracticeTest, RowCategory, RowCount };
 
   study::TrackInfo track;
   int category = -1;  // -1 = all categories

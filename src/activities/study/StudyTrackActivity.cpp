@@ -7,7 +7,6 @@
 #include <cstdio>
 
 #include "StudyFlashcardsActivity.h"
-#include "StudyMatchActivity.h"
 #include "StudyQuizActivity.h"
 
 void StudyTrackActivity::onEnter() {
@@ -44,8 +43,6 @@ void StudyTrackActivity::buildRows() {
   rows[RowPracticeTest].label = tr(STR_STUDY_PRACTICE_TEST);
   rows[RowPracticeTest].value = examValue;
   rows[RowPracticeTest].enabled = track.questions > 0;
-  rows[RowMatch].label = tr(STR_STUDY_MATCH);
-  rows[RowMatch].enabled = track.cards >= StudyMatchActivity::kPairs;
   rows[RowCategory].label = tr(STR_STUDY_CATEGORY);
   rows[RowCategory].value = category >= 0 && category < static_cast<int>(track.categories.size())
                                 ? track.categories[category].c_str()
@@ -78,9 +75,6 @@ void StudyTrackActivity::openMode(const int row) {
     case RowPracticeTest:
       next = makeUniqueNoThrow<StudyQuizActivity>(renderer, mappedInput, track, category,
                                                   StudyQuizActivity::Mode::PracticeTest);
-      break;
-    case RowMatch:
-      next = makeUniqueNoThrow<StudyMatchActivity>(renderer, mappedInput, track, category);
       break;
     default:
       return;

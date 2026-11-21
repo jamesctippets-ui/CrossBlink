@@ -7,7 +7,7 @@
 #include "MappedInputManager.h"
 #include "components/themes/BaseTheme.h"
 
-// Drawing and hit-testing shared by the study screens (flashcards, quiz, match). These screens are mostly large
+// Drawing and hit-testing shared by the study screens (flashcards and quiz). These screens are mostly large
 // tappable boxes holding wrapped text, which the FreeInkUI list component does not cover.
 namespace StudyUi {
 
@@ -15,7 +15,7 @@ enum class BoxStyle : uint8_t {
   Normal,    // outlined
   Selected,  // filled black, white text
   Correct,   // filled black, white text, thicker frame (same look as Selected on 1-bit panels)
-  Dimmed,    // light grey fill: a matched pair or a wrong pick
+  Dimmed,    // light grey fill: an unavailable button or a wrong pick
 };
 
 struct Layout {
