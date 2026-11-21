@@ -2,6 +2,7 @@
 
 ### Added
 
+- Sticky: when the downloaded dictionary has no entry for a word, the reader quietly joins a saved Wi-Fi network, looks the word up in the free online Free Dictionary API (English), shows the definition, and turns Wi-Fi back off. Words already fetched are reused from the SD card without Wi-Fi. Turn it off with Settings > Reader > Online Dictionary Fallback.
 - Show a Delete button when opening a clipping on button-only readers (#936).
 - Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
 - Add a Delete button below Open when viewing a clipping on touch readers.

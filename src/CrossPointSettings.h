@@ -664,6 +664,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char dictionarySdFontFamilyName[64] = "";
   // Zero follows the active reader size.
   uint8_t dictionaryFontPointSize = 0;
+  // When the offline dictionary has no entry, join a saved Wi-Fi network and
+  // search an online dictionary (Sticky only; ignored on other devices).
+  uint8_t onlineDictionaryFallback = 1;
   uint8_t pluginsEnabled = 0;
   uint8_t pluginHubPromptHidden = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
