@@ -135,6 +135,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/Dictionary.h"
 #include "util/DictionaryRegistry.h"
 #include "util/FrontlightSchedule.h"
+#include "util/PowerDoublePress.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepWakePolicy.h"
 
@@ -149,6 +150,7 @@ static unsigned long allowSleepAt = 0;
 static ButtonShortcutController buttonShortcutController;
 static unsigned long lastX4ProHomeKeyTapAt = 0;
 static bool x4ProHomeKeyTapPending = false;
+static PowerDoublePress powerDoublePress;
 // A held power button can span deep-sleep wake and the first main-loop frame.
 // Do not treat that wake gesture as an in-session shortcut until it has been released.
 static bool powerButtonReleasedSinceWake = false;
@@ -594,6 +596,7 @@ CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
 void notifyQuickLockChanged() {
   const bool locked = buttonShortcutController.isQuickLocked();
   x4ProHomeKeyTapPending = false;
+  powerDoublePress.reset();
   mappedInputManager.clearInjectedReleases();
   LOG_DBG("MAIN", "Quick Lock %s", locked ? "enabled" : "disabled");
   if (locked) {
@@ -743,6 +746,66 @@ bool dispatchShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
     return true;
   }
   return handleGlobalPowerButtonAction(action) || activityManager.handleShortcutAction(action);
+}
+
+bool powerDoublePressConfigured() {
+  return SETTINGS.doublePwrBtn != CrossPointSettings::SHORT_PWRBTN::IGNORE &&
+         SETTINGS.doublePwrBtn < CrossPointSettings::SHORT_PWRBTN_COUNT;
+}
+
+// Whether a short Power click on this screen may start a double press.
+bool powerDoublePressCanStart() {
+  // A modal owns Power.
+  if (activityManager.blocksGlobalInput()) return false;
+  // ButtonShortcutController toggles Quick Lock on the short release before
+  // this runs, so a double press cannot be told apart from it.
+  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK) return false;
+  // Where Power stands in for Confirm (menus, lists, reader popups), keep
+  // selection instant. Several screens act on the Confirm press edge, which
+  // fires before a double press could be recognized.
+  return !mappedInputManager.powerShortPressActsAsConfirm();
+}
+
+// Runs before the ordinary Power dispatch. Returns true when a double press
+// consumed this input frame. Otherwise the frame continues: a held click is
+// hidden from the rest of the loop, and a replayed click reaches every short
+// Power consumer (global shortcut, reader page turn, Confirm) as a real one.
+bool handlePowerDoublePress() {
+  if (!powerDoublePressConfigured()) {
+    powerDoublePress.reset();
+    return false;
+  }
+
+  PowerDoublePress::Input input;
+  input.now = mappedInputManager.buttonSampleTime();
+  input.pressed = mappedInputManager.wasPowerPhysicallyPressed();
+  input.heldMs = mappedInputManager.getHeldTime();
+  input.shortRelease = mappedInputManager.wasPowerPhysicallyReleased() &&
+                       input.heldMs < SETTINGS.getPowerButtonLongPressDuration() &&
+                       !mappedInputManager.isPowerReleaseSuppressed() && !mappedInputManager.isPowerSwallowed();
+  // Only evaluated when a click could start a gesture.
+  input.canStart = input.shortRelease && powerDoublePressCanStart();
+
+  switch (powerDoublePress.update(input)) {
+    case PowerDoublePress::Event::None:
+      return false;
+    case PowerDoublePress::Event::HoldClick:
+      mappedInputManager.swallowPowerUntilReleased();
+      return false;
+    case PowerDoublePress::Event::ReplayClick:
+      mappedInputManager.replayPowerClick(powerDoublePress.heldMs());
+      return false;
+    case PowerDoublePress::Event::DoublePress: {
+      // Hide this press, any hold, and its release from the short and long
+      // Power handlers.
+      mappedInputManager.swallowPowerUntilReleased();
+      const auto action = static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.doublePwrBtn);
+      LOG_DBG("MAIN", "Power double press -> action %u", static_cast<unsigned>(action));
+      dispatchShortcutAction(action);
+      return true;
+    }
+  }
+  return false;
 }
 
 ButtonShortcutController::ChordAction configuredChordAction() {
@@ -2183,6 +2246,10 @@ void loop() {
       powerButtonReleasedSinceWake = true;
     }
   } else if (millis() >= allowSleepAt) {
+    if (handlePowerDoublePress()) {
+      lastActivityTime = millis();
+      return;
+    }
     const auto powerAction = getPowerButtonAction();
     if (powerAction == CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK) {
       const bool longPower = gpio.getPowerButtonHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();

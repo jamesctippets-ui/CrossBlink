@@ -10,6 +10,7 @@
 - Show a Delete button when opening a clipping on button-only readers (#936).
 - Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
 - Add a Delete button below Open when viewing a clipping on touch readers.
+- Power button double-press: Settings > Controls > Power Button > Double-press runs an action when you press Power twice quickly. It is off by default, and nothing changes until you pick an action. When it is set, a single short press waits about 0.3 seconds to tell one press from two; holding Power (for example to sleep) is not delayed, and menus keep Power as an instant Select.
 
 ### Changed
 

@@ -549,6 +549,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
   uint8_t longPwrBtn = SLEEP;
+  // Double power button press action. Off by default: while it is off, short
+  // presses run immediately exactly as before. When set, a short press waits
+  // briefly for a second press (see util/PowerDoublePress.h).
+  uint8_t doublePwrBtn = IGNORE;
   // Power + Up shortcut action. Disabled by default so the established
   // Power + Down screenshot chord remains screenshot-only.
   uint8_t powerChordAction = CHORD_DISABLED;

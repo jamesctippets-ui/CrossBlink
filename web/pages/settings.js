@@ -181,7 +181,8 @@ let allSettings = [];
   function updateSettingsVisibility() {
     const pwrBtnFootnoteBackRow = document.getElementById('row-setting-pwrBtnFootnoteBack');
     if (pwrBtnFootnoteBackRow) {
-      const footnoteActionSelected = ['shortPwrBtn', 'longPwrBtn', 'longPressMenuAction', 'longPressBackAction']
+      const footnoteActionSelected = ['shortPwrBtn', 'longPwrBtn', 'doublePwrBtn', 'longPressMenuAction',
+        'longPressBackAction']
         .some(key => {
           const setting = allSettings.find(item => item.key === key);
           return setting && getControlValue(key) === setting.footnotesIndex;
@@ -196,8 +197,8 @@ let allSettings = [];
 
   function handleSettingChanged(key) {
     syncQuickResumeTimeoutForSleepScreen(key === 'sleepScreen', key === 'quickResumeSleepScreen');
-    if (key === 'shortPwrBtn' || key === 'longPwrBtn' || key === 'longPressMenuAction' ||
-        key === 'longPressBackAction') {
+    if (key === 'shortPwrBtn' || key === 'longPwrBtn' || key === 'doublePwrBtn' ||
+        key === 'longPressMenuAction' || key === 'longPressBackAction') {
       updateSettingsVisibility();
     }
     markChanged();

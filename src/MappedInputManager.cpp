@@ -126,6 +126,10 @@ void MappedInputManager::setMenuMode(const bool enabled) {
 
 void MappedInputManager::update() const {
   gpio.update();
+  replayedPowerClick = false;
+  if (powerSwallowed && !isPhysicalPressed(Button::Power) && !wasPhysicallyReleased(Button::Power)) {
+    powerSwallowed = false;
+  }
   expireReleaseSuppressions();
   for (const auto button : {HalGPIO::BTN_BACK, HalGPIO::BTN_CONFIRM, HalGPIO::BTN_LEFT, HalGPIO::BTN_RIGHT}) {
     if (!gpio.isPressed(button) && !gpio.wasReleased(button)) suppressedFrontReleases &= ~(1u << button);
@@ -299,6 +303,26 @@ uint8_t MappedInputManager::mappedFrontButtonFor(const Button button) const {
 }
 
 bool MappedInputManager::shouldUsePowerAsConfirmFallback() const { return !readerMode || powerAsConfirmInReaderMode; }
+
+bool MappedInputManager::powerShortPressActsAsConfirm() const {
+  return shouldUsePowerAsConfirmFallback() && !isPowerButtonActionAvailableOutsideReader(
+                                                  static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn));
+}
+
+bool MappedInputManager::wasPowerPhysicallyPressed() const {
+#ifdef SIMULATOR
+  if (simulatorPressed[buttonIndex(Button::Power)]) return true;
+#endif
+  return mapButton(Button::Power, &HalGPIO::wasPressed);
+}
+
+bool MappedInputManager::powerReleasedThisFrame() const {
+  return replayedPowerClick || gpio.wasReleased(HalGPIO::BTN_POWER);
+}
+
+unsigned long MappedInputManager::powerHeldTimeThisFrame() const {
+  return replayedPowerClick ? replayedPowerHeldMs : gpio.getHeldTime();
+}
 
 bool MappedInputManager::isFrontNavButtonSwapActive() const {
   const uint8_t context = navigationContext.load(std::memory_order_relaxed);
@@ -896,7 +920,7 @@ bool MappedInputManager::wasPressed(const Button button) const {
       return true;
     }
 
-    if (releaseSuppression.isPowerReleaseSuppressed()) return false;
+    if (releaseSuppression.isPowerReleaseSuppressed() || powerSwallowed) return false;
 
     if (powerAsConfirmInReaderMode && gpio.wasPressed(HalGPIO::BTN_POWER)) {
       // The active reader popup owns this Power press. Keep its configured
@@ -963,7 +987,7 @@ bool MappedInputManager::wasReleased(const Button button) const {
       return true;
     }
 
-    if (!shouldUsePowerAsConfirmFallback() || !gpio.wasReleased(HalGPIO::BTN_POWER)) {
+    if (powerSwallowed || !shouldUsePowerAsConfirmFallback() || !powerReleasedThisFrame()) {
       return false;
     }
 
@@ -975,14 +999,16 @@ bool MappedInputManager::wasReleased(const Button button) const {
       return false;
     }
 
-    const bool longPress = gpio.getHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();
+    const bool longPress = powerHeldTimeThisFrame() >= SETTINGS.getPowerButtonLongPressDuration();
     const auto action = longPress ? static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.longPwrBtn)
                                   : static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn);
     return !isPowerButtonActionAvailableOutsideReader(action);
   }
 
   if (button == Button::Power) {
-    const bool released = simulatedRelease || mapButton(button, &HalGPIO::wasReleased);
+    // A double-press gesture owns this click: hide it until Power is released.
+    if (powerSwallowed) return false;
+    const bool released = simulatedRelease || replayedPowerClick || mapButton(button, &HalGPIO::wasReleased);
     if (!released) {
       // A release edge stays visible for one full input loop. Once that loop
       // has passed, drop a stale suppression before the next Power press.
@@ -1018,7 +1044,7 @@ bool MappedInputManager::isPressed(const Button button) const {
 #ifdef SIMULATOR
   if (suppressedSimulatedFrontReleases & (1u << static_cast<uint8_t>(button))) return false;
 #endif
-  if (button == Button::Power && releaseSuppression.isPowerReleaseSuppressed()) {
+  if (button == Button::Power && (releaseSuppression.isPowerReleaseSuppressed() || powerSwallowed)) {
     return false;
   }
 
@@ -1033,7 +1059,7 @@ bool MappedInputManager::isPressed(const Button button) const {
       return true;
     }
 
-    if (releaseSuppression.isPowerReleaseSuppressed() || !shouldMirrorPowerAsConfirmHold() ||
+    if (releaseSuppression.isPowerReleaseSuppressed() || powerSwallowed || !shouldMirrorPowerAsConfirmHold() ||
         !gpio.isPressed(HalGPIO::BTN_POWER)) {
       return false;
     }
@@ -1118,6 +1144,8 @@ uint32_t MappedInputManager::buttonSampleTime() const {
 }
 
 unsigned long MappedInputManager::getHeldTime() const {
+  // A replayed Power click reports the duration of the click it stands for.
+  if (replayedPowerClick) return replayedPowerHeldMs;
   unsigned long heldTime = gpio.getHeldTime();
 #if CROSSINK_APP_CAP_TOUCH
   if (!gpio.wasAnyPressed() && !gpio.wasAnyReleased() && touchHeldOverrideValid &&

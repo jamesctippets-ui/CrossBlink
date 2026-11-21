@@ -99,6 +99,21 @@ class MappedInputManager {
   void suppressNextFrontRelease(Button button);
   void suppressNextPowerConfirmRelease() { releaseSuppression.suppressPowerConfirm(); }
   bool isPowerReleaseSuppressed() const { return releaseSuppression.isPowerReleaseSuppressed(); }
+  // Double-press Power support (see util/PowerDoublePress.h). Swallowing hides
+  // Power, including its hold and Confirm fallback, until it has been
+  // released. A replay makes this one input frame report a short Power click.
+  void swallowPowerUntilReleased() const { powerSwallowed = true; }
+  bool isPowerSwallowed() const { return powerSwallowed; }
+  void replayPowerClick(const unsigned long heldMs) const {
+    replayedPowerClick = true;
+    replayedPowerHeldMs = heldMs;
+  }
+  // Raw Power edges for gesture detection. Unlike wasReleased(), these never
+  // consume a release suppression.
+  bool wasPowerPhysicallyPressed() const;
+  bool wasPowerPhysicallyReleased() const { return wasPhysicallyReleased(Button::Power); }
+  // True where a short Power press currently stands in for Confirm.
+  bool powerShortPressActsAsConfirm() const;
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   void injectRelease(Button button) const { injectedReleases[static_cast<size_t>(button)] = true; }
@@ -309,6 +324,13 @@ class MappedInputManager {
   // One-frame synthetic releases let a chord route through the existing
   // activity navigation path without allocating an event object.
   mutable std::array<bool, BUTTON_COUNT> injectedReleases{};
+  // Power double-press state. The swallow lasts until Power is released; the
+  // replayed click lasts for one input frame.
+  mutable bool powerSwallowed = false;
+  mutable bool replayedPowerClick = false;
+  mutable unsigned long replayedPowerHeldMs = 0;
+  bool powerReleasedThisFrame() const;
+  unsigned long powerHeldTimeThisFrame() const;
 #if CROSSINK_APP_CAP_TOUCH
   mutable bool suppressTouchTap = false;
   mutable bool deferredHomeGesture = false;
