@@ -169,6 +169,16 @@ ensure_python() {
   die "Python 3 with venv is needed. Install it and run this script again."
 }
 
+# The pip that ships with Apple's Python 3.9 is too old to pick the prebuilt wheels of esptool's
+# dependencies, and then tries to compile cryptography from source (needs Rust and OpenSSL).
+# Update pip first, and only ever accept a prebuilt cryptography.
+pip_install_esptool() {
+  local py="$1/bin/python"
+  "$py" -m pip install --quiet --disable-pip-version-check --upgrade pip setuptools wheel || return 1
+  "$py" -m pip install --quiet --disable-pip-version-check --prefer-binary \
+    --only-binary=cryptography "esptool==$ESPTOOL_VERSION" || return 1
+}
+
 ESPTOOL_PY=""
 ensure_esptool() {
   step "Checking esptool"
@@ -180,9 +190,14 @@ ensure_esptool() {
     python3 -m venv "$venv" || die "Could not create a Python environment in $venv."
   fi
   if ! "$venv/bin/python" -m esptool version 2>/dev/null | grep -q "$ESPTOOL_VERSION"; then
-    say "Installing esptool $ESPTOOL_VERSION..."
-    "$venv/bin/python" -m pip install --quiet --disable-pip-version-check "esptool==$ESPTOOL_VERSION" ||
-      die "Could not install esptool. Check your internet connection and try again."
+    say "Installing esptool $ESPTOOL_VERSION (this can take a minute)..."
+    if ! pip_install_esptool "$venv"; then
+      say "Starting over with a fresh Python environment..."
+      rm -rf "$venv"
+      python3 -m venv "$venv" || die "Could not create a Python environment in $venv."
+      pip_install_esptool "$venv" ||
+        die "Could not install esptool. Check your internet connection and try again. If it keeps failing, delete $TOOL_HOME and run this again."
+    fi
   fi
   ESPTOOL_PY="$venv/bin/python"
   say "esptool $ESPTOOL_VERSION is ready."
