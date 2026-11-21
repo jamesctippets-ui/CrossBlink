@@ -64,6 +64,16 @@ a { color: var(--accent); }
     <h2><span class="step">1</span>Plug in the Sticky</h2>
     <p>Connect the Sticky to this computer with a USB-C data cable and turn it on. When you press a button below,
       Chrome asks which device to use: pick the one named <b>USB JTAG/serial debug unit</b> (or similar).</p>
+    <details><summary>Chrome doesn't list the Sticky?</summary>
+      <ul>
+        <li>Wake the Sticky so it is not asleep. USB may stay off while it sleeps.</li>
+        <li>Try another USB-C cable. Many cables only charge and carry no data.</li>
+        <li>Close anything else using it: the Inky app, Sticky Hub, a serial monitor, or another tab with this page. Only one app can hold the port at a time.</li>
+        <li>If it still doesn't show, put it in download mode: hold the BOOT button, press and release RESET, then let go of BOOT. Pick the
+          port again. Download mode can only install firmware, not send study tracks; press RESET when it finishes.</li>
+        <li>On Windows, if nothing appears in Device Manager under Ports either, try another USB port on the computer.</li>
+      </ul>
+    </details>
   </section>
 
   <section class="card">

@@ -11,7 +11,7 @@ import {
 const params = new URLSearchParams(location.search);
 const BUILDS = (params.get("builds") || "https://raw.githubusercontent.com/jamesctippets-ui/CrossBlink/sticky-builds").replace(/\/$/, "");
 const STUDY = (params.get("study") || "https://raw.githubusercontent.com/jamesctippets-ui/Study-App/eink-study-pack").replace(/\/$/, "");
-const USB_FILTERS = [{ usbVendorId: 0x303a }]; // Espressif (the Sticky's built-in USB serial)
+const ESPRESSIF_VID = 0x303a; // the Sticky's built-in USB serial
 
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -80,17 +80,21 @@ async function inflateRaw(bytes) {
 
 // Reuses a Sticky this site was already allowed to use, else asks Chrome to pick one.
 // After a reset the Sticky comes back as a new port, so this runs before every job.
+// The picker lists every serial port, not just Espressif ones: a Sticky in download
+// mode, or behind a USB hub or adapter, can report another vendor ID and would be hidden.
 async function pickPort() {
-  const known = (await navigator.serial.getPorts()).filter((p) => p.getInfo().usbVendorId === 0x303a);
-  if (known.length === 1) return known[0];
-  return navigator.serial.requestPort({ filters: USB_FILTERS });
+  const known = await navigator.serial.getPorts();
+  const espressif = known.filter((p) => p.getInfo().usbVendorId === ESPRESSIF_VID);
+  if (espressif.length === 1) return espressif[0];
+  if (espressif.length === 0 && known.length === 1) return known[0];
+  return navigator.serial.requestPort();
 }
 
 function friendly(err) {
   const msg = String((err && err.message) || err);
   if (err && err.name === "NotFoundError") return "No device was picked.";
   if (/Failed to open serial port|already open/i.test(msg)) {
-    return "The USB port is busy. Close other apps using the Sticky (Sticky Hub, a serial monitor, another tab) and try again.";
+    return "The USB port is busy. Close other apps using the Sticky (the Inky app, Sticky Hub, a serial monitor, another tab) and try again.";
   }
   if (msg === "ERR:not_on_home") return "The Sticky is not on its Home screen. Go back to Home and press Send again.";
   return msg;
