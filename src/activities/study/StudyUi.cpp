@@ -26,7 +26,7 @@ Layout beginScreen(GfxRenderer& renderer, const MappedInputManager& input, const
   } else {
     GUI.drawHeader(renderer, layout.header, title, subtitle);
   }
-  const int top = layout.header.y + layout.header.height + metrics.verticalSpacing;
+  const int top = TouchHeaderBackButton::contentTop(renderer, input) + metrics.verticalSpacing;
   const int side = metrics.contentSidePadding;
   layout.content = Rect{side, top, renderer.getScreenWidth() - side * 2, renderer.getScreenHeight() - top - side};
   return layout;

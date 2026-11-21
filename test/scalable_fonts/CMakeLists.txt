@@ -88,3 +88,16 @@ if(SANITIZE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(scalable_font_subset_compare PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
   target_link_options(scalable_font_subset_compare PRIVATE -fsanitize=address,undefined)
 endif()
+
+add_executable(font_byte_digest_test FontByteDigestTest.cpp)
+target_compile_options(font_byte_digest_test PRIVATE -UNDEBUG)
+if(SANITIZE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(font_byte_digest_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(font_byte_digest_test PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME font_byte_digest COMMAND font_byte_digest_test)
+
+file(GLOB scalable_font_adapter_test_SHAPER_SOURCES ../../lib/OtShaper/*.cpp)
+target_sources(scalable_font_adapter_test PRIVATE ../../lib/EpdFont/ComplexShaper.cpp
+  ../../lib/Utf8/Utf8.cpp ${scalable_font_adapter_test_SHAPER_SOURCES})
+target_include_directories(scalable_font_adapter_test PRIVATE ../../lib/OtShaper ../../lib/Utf8 ../complex_shaper/stubs)

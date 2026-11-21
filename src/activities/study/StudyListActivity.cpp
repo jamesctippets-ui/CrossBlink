@@ -91,9 +91,9 @@ void StudyListActivity::listScreen(UiApp::ScreenType& screen, void* user) {
 
 void StudyListActivity::buildListScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  screen.setContentMargin(
-      fui::Insets{static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput)), 0,
-                  static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  setUiContentMargin(screen, renderer,
+                     fui::Insets{static_cast<int16_t>(TouchHeaderBackButton::contentTop(renderer, mappedInput)), 0,
+                                 static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   if (rows.empty()) return;
 
@@ -134,7 +134,7 @@ void StudyListActivity::render(RenderLock&&) {
       UITheme::drawCenteredWrappedText(renderer, area, StudyUi::bodyFont(), y, emptyHint(), 6);
     }
   } else {
-    app.render();
+    renderUiApp(app, uiTarget);
     uiReady = true;
   }
   const auto labels =
