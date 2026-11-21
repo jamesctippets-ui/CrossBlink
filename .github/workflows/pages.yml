@@ -28,6 +28,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: actions/configure-pages@v6
+        id: pages
 
       - uses: actions/setup-node@v5
         with:
@@ -40,6 +41,10 @@ jobs:
 
       - run: npm run build
         working-directory: site
+        env:
+          # Serve correctly from a project subpath such as /CrossBlink/.
+          SITE_URL: ${{ steps.pages.outputs.origin }}
+          SITE_BASE: ${{ steps.pages.outputs.base_path }}
 
       - uses: actions/upload-pages-artifact@v4
         with:

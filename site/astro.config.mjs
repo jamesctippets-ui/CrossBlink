@@ -61,5 +61,7 @@ export default defineConfig({
   vite: {
     plugins: [watchExternalDocs()],
   },
-  site: "https://www.crossink.dev",
+  // Pages deploys set these for a project-site subpath (e.g. /CrossBlink); upstream builds keep the root.
+  site: process.env.SITE_URL || "https://www.crossink.dev",
+  base: process.env.SITE_BASE || "/",
 });

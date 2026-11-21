@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- The documentation site and flasher now load with their styles and images when served from GitHub Pages at /CrossBlink/, and the site's top bar links to the Flasher.
 - Study mode: choosing Quiz, Practice test or Match from a track no longer opens Flashcards instead.
 - Stay in the selected chapter when following EPUB Contents links, including links to positions within a chapter.
 - Indent EPUB blockquotes that rely on default margins (#956).
