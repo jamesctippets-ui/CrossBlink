@@ -28,12 +28,31 @@ the latest published pack: leave the reader on Home, tick the tracks and press *
 
 | Mode | What it does |
 |---|---|
-| Flashcards | 20 cards per session, due and new cards first, using the app's SM-2 schedule. Tap to reveal, then **Got it** or **Don't got it**. |
+| Flashcards | 20 cards per session, due and new cards first, using the app's SM-2 schedule. Turn the page (or choose **Show answer**) to see the answer, then **Got it** or **Don't got it**. |
 | Quiz | 10 random questions with the answer and explanation after each one. Multi-select questions need **Check**. |
 | Practice test | The track's exam length and time limit from the pack, no feedback until the end, then the score, the pass mark and a review of misses. |
 | Match | Four terms and four definitions. Tap a term, then its definition. Not logged, like the app's Match. |
 
 **Category** on the track menu narrows every mode to one category; tap it to cycle through them.
+
+## Reading and controls
+
+Flashcards, Quiz and Practice test read like a book. They use the reader's font family and size, line spacing,
+margins and status bars (the book title is the track, the chapter is the mode and the card or question number). A
+question, answer or explanation that does not fit on one page continues on the next, so nothing is cut off; the status
+bar shows the page within the current card or question.
+
+| Action | Buttons | Touch |
+|---|---|---|
+| Next page, or the next choice on the page | Down (or Right) | Tap the right of the page, or swipe left |
+| Previous page or choice | Up (or Left) | Tap the left of the page, or swipe right |
+| Pick the highlighted choice | OK | Tap the choice |
+| Leave | Hold Up or Down for a second, or Back | Swipe up |
+
+The first button press shows a frame around the choice that OK would pick; a tap hides it again. Turning past the
+last page of a flashcard's prompt shows its answer, and paging back from the answer shows the prompt again. After
+quiz feedback or a reviewed miss, turning past the last page goes to the next question. Page-turn taps and swipes
+follow the reader's touch settings. The reader's built-in font is used even when an SD card font is chosen for books.
 
 ## Files the reader writes
 

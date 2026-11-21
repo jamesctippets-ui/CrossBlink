@@ -4,11 +4,13 @@
 
 #include <vector>
 
-#include "StudyScreenActivity.h"
+#include "StudyBookActivity.h"
 
 // Quiz (short, answer shown after each question) and Practice test (the track's real length and time limit, no
-// feedback until the end, then score, pass mark and a review of misses). Every answer is logged for the app.
-class StudyQuizActivity final : public StudyScreenActivity {
+// feedback until the end, then score, pass mark and a review of misses), read like a book: each question, its
+// feedback and each reviewed miss is a short chapter that continues over as many pages as it needs. Every answer is
+// logged for the app.
+class StudyQuizActivity final : public StudyBookActivity {
  public:
   enum class Mode : uint8_t { Quiz, PracticeTest };
   static constexpr unsigned kQuizLength = 10;
@@ -18,16 +20,21 @@ class StudyQuizActivity final : public StudyScreenActivity {
 
   StudyQuizActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, study::TrackInfo track, int category,
                     Mode mode)
-      : StudyScreenActivity("StudyQuiz", renderer, mappedInput, std::move(track), category), mode(mode) {}
+      : StudyBookActivity("StudyQuiz", renderer, mappedInput, std::move(track), category), mode(mode) {}
 
   void onEnter() override;
   void onExit() override;
-  void render(RenderLock&&) override;
   bool preventAutoSleep() override { return mode == Mode::PracticeTest && state == State::Question; }
 
  protected:
   bool onTap(int id) override;
   bool onTick() override;
+  bool onPastEnd() override;
+  bool onBeforeStart() override;
+  bool choicePicked(int id) const override;
+  bool choiceEnabled(int id) const override;
+  void statusTitle(char* out, size_t size) const override;
+  float statusProgress() const override;
 
  private:
   enum class State : uint8_t { Question, Feedback, Results, Review, Empty, Error };
@@ -49,6 +56,12 @@ class StudyQuizActivity final : public StudyScreenActivity {
   unsigned long startMs = 0;
   unsigned long limitMs = 0;
   long shownMinutesLeft = -1;
+  // Text composed for the current page; the page borrows it until the next buildPage().
+  std::string chosenLine;
+  std::string answerLine;
+  char scoreLine[96] = "";
+  char passLine[96] = "";
+  char reviewLabel[64] = "";
 
   void buildSession();
   bool loadQuestion(uint16_t lineIndex);
@@ -59,8 +72,9 @@ class StudyQuizActivity final : public StudyScreenActivity {
   long minutesLeft() const;
   std::string optionsText(uint8_t mask) const;
 
-  void renderQuestion(const Rect& c);
-  void renderFeedback(const Rect& c);
-  void renderResults(const Rect& c);
-  void renderReview(const Rect& c);
+  const char* modeTitle() const;
+  void buildPage(bool focusLast = false);
+  void buildQuestionPage();
+  void buildAnswerPage(bool feedback);
+  void buildResultsPage();
 };
