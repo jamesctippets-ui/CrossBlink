@@ -65,6 +65,31 @@ Some devices ship with USB data transfer turned off, so a computer cannot flash 
 3. Choose the firmware option you want to download.
 4. Click **Download update.bin** and follow the instructions on the page.
 
+## CrossBlink Flasher in Chrome (USB flashing and study packs)
+
+The [CrossBlink Flasher](https://jamesctippets-ui.github.io/CrossBlink/flash/)
+page does everything from Chrome or Edge over a USB cable, with nothing to
+install. It works like Inky: the page talks to the Sticky with Web Serial.
+
+1. Connect the Sticky with a USB-C data cable and open the page.
+2. **Install firmware.** Pick a build (the latest `main` build or an open pull
+   request's build) or a `firmware.bin` (or the zip GitHub gives you) from your
+   computer, then click **Install on Sticky** and pick the Sticky in Chrome's list.
+   The page writes the firmware into the Sticky's spare app slot, checks it, and
+   only then tells the Sticky to start from it, the same way the reader's own SD
+   card update does. The firmware running now, the SD card and your settings are
+   not touched, so an interrupted install leaves the old version in place.
+3. **Send Cert Study Hub tracks.** Leave the Sticky on its Home screen, tick the
+   tracks you want (the choice is remembered) and click **Send to Sticky**. The
+   files go to `/study/` over the USB cable; `manifest.json` is sent last and lists
+   only the ticked tracks. `progress.jsonl` and the reader's schedule are kept.
+
+The builds come from the `sticky-builds` branch, which the "Publish Sticky
+builds" workflow refreshes after every Sticky build of `main` and of each open
+pull request. The study pack comes from Study-App's `eink-study-pack` branch.
+Both are plain files on raw.githubusercontent.com, which a web page is allowed
+to download (GitHub release assets and Actions artifacts are not).
+
 ## CrossBlink: Sticky Hub for macOS (USB flashing and study packs)
 
 Sticky Hub is a local web page on your Mac that flashes the Sticky over USB and
