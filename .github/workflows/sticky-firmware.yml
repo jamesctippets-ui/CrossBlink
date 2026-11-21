@@ -1,0 +1,76 @@
+name: Sticky firmware (main)
+
+# Builds the Sticky firmware for every push to main and keeps it as the
+# `sticky-firmware-main` artifact, which scripts/flash-sticky.sh downloads by
+# default. Pull request builds come from ci.yml as `sticky-firmware-pr<N>`.
+# Kept in its own file so upstream CrossInk syncs of ci.yml do not conflict.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "site/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: sticky-firmware-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-sticky:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: ${{ runner.os }}-platformio-py3.14-core6.1.19-sticky-${{ hashFiles('platformio.ini', 'platformio.local.example.ini') }}
+
+      - name: Install PlatformIO Core
+        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+
+      - name: Build sticky firmware
+        run: |
+          set -euo pipefail
+          # custom_sdkconfig rebuilds the Arduino IDF libs first. On a cold package cache that nested
+          # build can swap tool-scons under the outer build and fail the link once; a second run links.
+          if ! pio run -j1 -e sticky | tee pio-sticky.log; then
+            echo "::warning::First sticky build failed; retrying once (tool-scons swap on cold cache)"
+            pio run -j1 -e sticky | tee pio-sticky.log
+          fi
+
+      - name: Upload Sticky firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-firmware-main
+          path: .pio/build/sticky/firmware.bin
+          retention-days: 90
+
+      - name: Extract firmware stats
+        run: |
+          set -euo pipefail
+          {
+            echo "## sticky firmware build stats"
+            grep -E "RAM:\s|Flash:\s" pio-sticky.log | while read -r line; do echo "- ${line}"; done
+          } >> "$GITHUB_STEP_SUMMARY"

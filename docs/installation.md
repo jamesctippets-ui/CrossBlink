@@ -64,3 +64,58 @@ Some devices ship with USB data transfer turned off, so a computer cannot flash 
 2. The latest version is selected for you. To go back to an earlier build, pick it from the dropdown.
 3. Choose the firmware option you want to download.
 4. Click **Download update.bin** and follow the instructions on the page.
+
+## CrossBlink: Sticky Hub for macOS (USB flashing and study packs)
+
+Sticky Hub is a local web page on your Mac that flashes the Sticky over USB and
+copies a Study-App study pack to it. Only the app firmware is replaced: the SD
+card (books, settings, caches, study progress) and the rest of flash are left
+alone.
+
+Open Terminal and run:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/jamesctippets-ui/crossblink/main/scripts/flash-sticky.sh)
+```
+
+The first run sets up `esptool` in `~/.crossblink-flasher` and, so builds can be
+downloaded, installs the GitHub CLI with Homebrew and asks you to sign in once
+(GitHub requires sign-in for build downloads). The page then opens in your
+browser. Keep the Terminal window open while you use it; Ctrl+C stops it.
+
+**Flash firmware (USB).** Plug the Sticky in with a USB-C data cable and wake
+it. Pick the latest build from `main`, an open pull request's build, or a
+`firmware.bin`/artifact `.zip` you downloaded, then click **Flash Sticky**.
+Files that are not ESP32-S3 app images, or are too large for the app slot, are
+refused.
+
+**Send Cert Study Hub (Wi-Fi).** On the Sticky open File Transfer, on the same
+Wi-Fi as the Mac. The page finds the Sticky by itself (the reader's UDP
+discovery, then `crosspoint.local`) and downloads the latest Cert Study Hub pack
+from Study-App's `eink-study-pack` release, so no Study-App checkout is needed.
+Tick the cert tracks you want and click **Send**. The choice is remembered for
+next time. You can also pick **A pack folder on this Mac** to send a pack you
+built with Study-App's `tools/eink_pack.py`.
+
+Files go to `/study/` on the SD card, and `manifest.json` (sent last) lists only
+the tracks you ticked. Files in the pack replace their old copies;
+`progress.jsonl`, dot-folders such as `.srs`, and everything else on the card
+are left alone.
+
+### Terminal only
+
+Pass any option to flash without the page (add it after the command above, or
+run `scripts/flash-sticky.sh` from a clone):
+
+| Option | What it does |
+| --- | --- |
+| `--main` | Flash the newest Sticky build from `main` |
+| `--pr 4` | Flash the newest Sticky build from pull request #4 |
+| `--file ~/Downloads/sticky-firmware-pr4.zip` | Flash a `firmware.bin` or artifact `.zip` you already downloaded |
+| `--port /dev/cu.usbmodem101` | Use this serial port instead of finding it automatically |
+| `--dry-run` | Do every check but write nothing |
+
+Under the hood it writes `firmware.bin` to the first app slot (`0x10000`) and
+blanks `otadata` (`0xe000`, 8 KB) so the bootloader starts that slot, since an
+earlier SD Card Firmware Update may have left the device booting the second
+slot. NVS, the bootloader and the partition table are not written.
