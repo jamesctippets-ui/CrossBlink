@@ -1,7 +1,7 @@
 # Study mode (Cert Study Hub)
 
-Study mode runs Cert Study Hub's certification practice on the reader, offline: flashcards, quizzes, timed practice
-tests and a matching game. It is built into touch builds (the Sticky) and is opened from **Home > Study**.
+Study mode runs Cert Study Hub's certification practice on the reader, offline: flashcards, quizzes and timed practice
+tests. It is built into touch builds (the Sticky) and is opened from **Home > Study**.
 
 ## Put a study pack on the SD card
 
@@ -31,7 +31,6 @@ the latest published pack: leave the reader on Home, tick the tracks and press *
 | Flashcards | 20 cards per session, due and new cards first, using the app's SM-2 schedule. Tap to reveal, then **Got it** or **Don't got it**. |
 | Quiz | 10 random questions with the answer and explanation after each one. Multi-select questions need **Check**. |
 | Practice test | The track's exam length and time limit from the pack, no feedback until the end, then the score, the pass mark and a review of misses. |
-| Match | Four terms and four definitions. Tap a term, then its definition. Not logged, like the app's Match. |
 
 **Category** on the track menu narrows every mode to one category; tap it to cycle through them.
 
