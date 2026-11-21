@@ -9,8 +9,12 @@ import {
 // Both branches are published by CI as plain files, which raw.githubusercontent.com lets any
 // page download. ?builds= and ?study= point the page somewhere else (for testing).
 const params = new URLSearchParams(location.search);
-const BUILDS = (params.get("builds") || "https://raw.githubusercontent.com/jamesctippets-ui/CrossBlink/sticky-builds").replace(/\/$/, "");
-const STUDY = (params.get("study") || "https://raw.githubusercontent.com/jamesctippets-ui/Study-App/eink-study-pack").replace(/\/$/, "");
+const BUILDS_SOURCE = { owner: "jamesctippets-ui", repo: "CrossBlink", branch: "sticky-builds" };
+const STUDY_SOURCE = { owner: "jamesctippets-ui", repo: "Study-App", branch: "eink-study-pack" };
+const BUILDS_OVERRIDE = params.get("builds");
+const STUDY_OVERRIDE = params.get("study");
+let BUILDS = (BUILDS_OVERRIDE || rawBase(BUILDS_SOURCE, BUILDS_SOURCE.branch)).replace(/\/$/, "");
+let STUDY = (STUDY_OVERRIDE || rawBase(STUDY_SOURCE, STUDY_SOURCE.branch)).replace(/\/$/, "");
 const ESPRESSIF_VID = 0x303a; // the Sticky's built-in USB serial
 
 const $ = (id) => document.getElementById(id);
@@ -68,6 +72,31 @@ async function fetchJson(url, label) {
   return res.json();
 }
 
+function rawBase(source, ref) {
+  return `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${ref}`;
+}
+
+// raw.githubusercontent.com caches a branch path for up to five minutes and ignores query strings,
+// so for a few minutes after CI publishes, the build list and the firmware it names can come from
+// different versions and the checksum check fails. Reading everything from the branch's current
+// commit avoids that: a commit URL never changes. Falls back to the branch when the GitHub API is
+// unreachable or rate limited (60 requests an hour per address).
+async function pinnedBase(source) {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${source.owner}/${source.repo}/commits/${source.branch}`, {
+      headers: { Accept: "application/vnd.github.sha" },
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const sha = (await res.text()).trim();
+      if (/^[0-9a-f]{40}$/.test(sha)) return rawBase(source, sha);
+    }
+  } catch {
+    /* offline or blocked: use the branch */
+  }
+  return rawBase(source, source.branch);
+}
+
 async function sha256Hex(bytes) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -106,6 +135,7 @@ function friendly(err) {
 async function loadBuilds() {
   const select = $("build");
   try {
+    if (!BUILDS_OVERRIDE) BUILDS = await pinnedBase(BUILDS_SOURCE);
     const index = await fetchJson(BUILDS + "/index.json", "the build list");
     builds = Array.isArray(index.builds) ? index.builds : [];
   } catch (err) {
@@ -148,7 +178,7 @@ async function chosenImage() {
   flashLog.line(`Downloading ${b.label} …`);
   const bytes = await fetchBytes(`${BUILDS}/${b.path}?sha=${b.sha}`, "the firmware");
   if (b.sha256 && (await sha256Hex(bytes)) !== b.sha256) {
-    throw new Error("The downloaded firmware did not match its checksum. Try again in a minute.");
+    throw new Error("The downloaded firmware did not match its checksum. Reload this page and try again.");
   }
   return { bytes, name: b.label };
 }
@@ -241,6 +271,7 @@ async function restart(transport) {
 
 async function loadPack() {
   try {
+    if (!STUDY_OVERRIDE) STUDY = await pinnedBase(STUDY_SOURCE);
     const [manifest, list] = await Promise.all([
       fetchJson(STUDY + "/study/manifest.json", "the study pack"),
       fetchJson(STUDY + "/study/files.json", "the study pack's file list"),
