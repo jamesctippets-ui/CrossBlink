@@ -7,15 +7,17 @@
 - Study mode on touch devices: Home > Study runs Cert Study Hub flashcards, quizzes and timed practice tests offline from a study pack on the SD card, and logs results so the app can import them.
 - CrossBlink Flasher, a web page for Chrome (`site/public/flash/`), installs Sticky firmware and sends Cert Study Hub tracks over a USB cable with nothing to install. Firmware goes into the spare app slot and the Sticky switches to it only after it is written and checked, so the SD card, settings and running firmware are safe if the install is interrupted. CI now publishes each Sticky build to a `sticky-builds` branch the page can download.
 - Sticky: when the downloaded dictionary has no entry for a word, the reader quietly joins a saved Wi-Fi network, looks the word up in the free online Free Dictionary API (English), shows the definition, and turns Wi-Fi back off. Words already fetched are reused from the SD card without Wi-Fi. Turn it off with Settings > Reader > Online Dictionary Fallback.
-- Show a Delete button when opening a clipping on button-only readers (#936).
-- Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
-- Add a Delete button below Open when viewing a clipping on touch readers.
 - Power button double-press: Settings > Controls > Power Button > Double-press runs an action when you press Power twice quickly. It is off by default, and nothing changes until you pick an action. When it is set, a single short press waits about 0.3 seconds to tell one press from two; holding Power (for example to sleep) is not delayed, and menus keep Power as an instant Select.
+- Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
+- Show a Delete button when viewing a clipping (#936).
+- Add an optional Dutch hyphenation pack for EPUBs (#970).
 
 ### Changed
 
 - Dashboard Home on the Sticky: swiping left now opens a Study page with your study stats (cards due, day streak, quiz score, today's and all-time counts, and progress per track) instead of showing the next recent book. Tap a track to study it, or swipe right to go back to Home.
 - Study mode: Flashcards, Quiz and Practice test now look like a book, using the reader's font, margins and status bars, and work with the buttons: Down and Up turn pages and move between choices, OK picks, and holding Up or Down leaves.
+- With Incremental indexing, devices with PSRAM finish laying out the current EPUB chapter while you read instead of stopping after a set number of pages.
+- Focus Reading bolds the first letter of short words and half of longer words, rounded up to a maximum of nine letters.
 
 ### Fixed
 
@@ -24,8 +26,13 @@
 - The documentation site and flasher now load with their styles and images when served from GitHub Pages at /CrossBlink/, and the site's top bar links to the Flasher.
 - Flasher: the device picker now lists every serial port instead of only Espressif ones, so a Sticky that reports another USB vendor ID shows up, and the page has troubleshooting steps for when it does not.
 - Study mode: choosing Quiz or Practice test from a track no longer opens Flashcards instead.
+- Preserve the original line breaks and indentation in EPUB preformatted text, such as shaped poems.
 - Stay in the selected chapter when following EPUB Contents links, including links to positions within a chapter.
 - Indent EPUB blockquotes that rely on default margins (#956).
+- Keep the last readable EPUB chapter when an SD read or write interrupts full or incremental indexing.
+- Fix slow EPUB indexing and page turns caused by repeated glyph scans, stylesheet checks, and small chapter-index writes.
+- On X3 and X4, look up publisher styles on the SD card before retrying a chapter in Safe Mode when memory runs low.
+- Keep wide EPUB tables in a grid on X3 and X4 when an SD-card font leaves less memory for indexing.
 
 ## [v2.0.0] - 2026-11-19
 
@@ -116,6 +123,7 @@
 - Hide tilt controls when the sensor cannot support page turning or fails its startup check, while keeping saved preferences (CrossPoint 8fc2b66 and #4078).
 - Make EPUB highlight handles easier to grab and drag across lines on touch readers.
 - Reduce repeated SD card reads when indexing EPUBs with ruled lines and a custom reader font.
+- Dither EPUB illustrations only after resizing, with separate output for Gray and B&W (including Night Mode).
 
 ## [v1.6.1] - 2026-10-03
 
